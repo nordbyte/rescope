@@ -20,7 +20,7 @@ jobs:
 
       - name: Setup Rust
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
 
       - name: Setup Node.js
