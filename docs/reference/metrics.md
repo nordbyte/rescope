@@ -1,0 +1,25 @@
+# Metrics
+
+## CPU
+
+CPU is sampled as process CPU percentage from `sysinfo`. Values can exceed `100%` when a process uses multiple cores.
+
+Recording reports calculate CPU core-seconds with the actual elapsed sample interval:
+
+```text
+cpu_core_seconds += (cpu_percent / 100) * actual_sample_interval_seconds
+```
+
+`--normalize-cpu` affects display values by dividing by logical CPU count. Core-seconds remain raw.
+
+## RAM
+
+RAM is resident memory when the platform exposes that metric. Recording reports track start, end, min, max, average and delta.
+
+## Disk I/O
+
+Read and write totals are calculated from per-process counters. The first appearance of a process identity has zero delta so pre-existing I/O is not counted as recording activity.
+
+## Platform notes
+
+On Windows, per-process I/O may include non-disk I/O. On Unix-like systems, cached operations may not increase physical disk counters.

@@ -4,6 +4,17 @@ use crate::aggregate::{RecordingAggregateOptions, aggregate_recording, aggregate
 use crate::metrics::{FilterSpec, GroupBy, RecordingReport, SnapshotReport, SortBy, SystemSample};
 
 #[derive(Debug, Clone)]
+pub struct SnapshotReportOptions {
+    pub interval: Duration,
+    pub group_by: GroupBy,
+    pub sort_by: SortBy,
+    pub filters: FilterSpec,
+    pub show_command: bool,
+    pub limit: usize,
+    pub normalize_cpu: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct RecordingReportOptions {
     pub requested_duration: Duration,
     pub interval: Duration,
@@ -13,31 +24,36 @@ pub struct RecordingReportOptions {
     pub show_command: bool,
     pub limit: usize,
     pub include_idle: bool,
+    pub normalize_cpu: bool,
 }
 
 pub fn build_snapshot_report(
     sample: &SystemSample,
-    interval: Duration,
-    group_by: GroupBy,
-    sort_by: SortBy,
-    filters: FilterSpec,
-    show_command: bool,
-    limit: usize,
+    options: SnapshotReportOptions,
 ) -> SnapshotReport {
-    let rows = aggregate_snapshot(sample, group_by, sort_by, interval, show_command, limit);
+    let rows = aggregate_snapshot(
+        sample,
+        options.group_by,
+        options.sort_by,
+        options.interval,
+        options.show_command,
+        options.limit,
+    );
     SnapshotReport {
         started_at: sample.timestamp,
         ended_at: sample.timestamp,
-        duration: interval,
-        interval,
+        duration: options.interval,
+        interval: options.interval,
         sample_count: 1,
-        group_by,
-        sort_by,
-        filters,
+        group_by: options.group_by,
+        sort_by: options.sort_by,
+        filters: options.filters,
         total_memory_bytes: sample.total_memory_bytes,
         available_memory_bytes: sample.available_memory_bytes,
         global_cpu_percent: sample.global_cpu_percent,
         process_total: sample.processes.len(),
+        logical_cpu_count: sample.logical_cpu_count,
+        cpu_normalized: options.normalize_cpu,
         rows,
         notes: platform_notes(),
     }
@@ -77,6 +93,12 @@ pub fn build_recording_report(
         group_by: options.group_by,
         sort_by: options.sort_by,
         filters: options.filters,
+        logical_cpu_count: samples
+            .iter()
+            .map(|sample| sample.logical_cpu_count)
+            .max()
+            .unwrap_or(1),
+        cpu_normalized: options.normalize_cpu,
         rows,
         notes: platform_notes(),
     }

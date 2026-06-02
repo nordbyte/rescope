@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -34,6 +35,27 @@ pub struct Cli {
     pub quiet: bool,
 }
 
+impl Cli {
+    pub fn color_enabled(&self) -> bool {
+        if self.no_color {
+            return false;
+        }
+
+        match self.color {
+            ColorMode::Always => true,
+            ColorMode::Never => false,
+            ColorMode::Auto => std::io::stdout().is_terminal(),
+        }
+    }
+
+    pub fn stdout_export_count(&self) -> usize {
+        [&self.json, &self.csv]
+            .into_iter()
+            .filter(|path| path.as_deref() == Some(std::path::Path::new("-")))
+            .count()
+    }
+}
+
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
     Snapshot(SnapshotArgs),
@@ -55,8 +77,14 @@ pub struct SnapshotArgs {
     #[arg(long, default_value_t = 20, value_parser = parse_limit)]
     pub limit: usize,
 
+    #[arg(long)]
+    pub all: bool,
+
     #[arg(long, default_value = "1s", value_parser = parse_duration_arg)]
     pub interval: Duration,
+
+    #[arg(long)]
+    pub normalize_cpu: bool,
 
     #[arg(long)]
     pub show_system: bool,
@@ -76,8 +104,14 @@ pub struct LiveArgs {
     #[arg(long, default_value_t = 20, value_parser = parse_limit)]
     pub limit: usize,
 
+    #[arg(long)]
+    pub all: bool,
+
     #[arg(long, default_value = "1s", value_parser = parse_duration_arg)]
     pub interval: Duration,
+
+    #[arg(long)]
+    pub normalize_cpu: bool,
 
     #[arg(long)]
     pub once: bool,
@@ -109,8 +143,14 @@ pub struct RecordArgs {
     #[arg(long, default_value_t = 20, value_parser = parse_limit)]
     pub limit: usize,
 
+    #[arg(long)]
+    pub all: bool,
+
     #[arg(long, default_value_t = 5)]
     pub timeline: usize,
+
+    #[arg(long)]
+    pub normalize_cpu: bool,
 
     #[arg(long)]
     pub include_idle: bool,
@@ -158,6 +198,9 @@ pub enum CliGroupBy {
     Process,
     Name,
     User,
+    Command,
+    Executable,
+    Parent,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -185,6 +228,9 @@ impl From<CliGroupBy> for GroupBy {
             CliGroupBy::Process => GroupBy::Process,
             CliGroupBy::Name => GroupBy::Name,
             CliGroupBy::User => GroupBy::User,
+            CliGroupBy::Command => GroupBy::Command,
+            CliGroupBy::Executable => GroupBy::Executable,
+            CliGroupBy::Parent => GroupBy::Parent,
         }
     }
 }
@@ -216,5 +262,51 @@ fn parse_limit(input: &str) -> Result<usize, RescopeError> {
         Err(RescopeError::InvalidLimit)
     } else {
         Ok(limit)
+    }
+}
+
+impl SnapshotArgs {
+    pub fn effective_limit(&self) -> usize {
+        if self.all { usize::MAX } else { self.limit }
+    }
+
+    pub fn needs_command(&self) -> bool {
+        self.filters.needs_command() || matches!(self.group, CliGroupBy::Command)
+    }
+
+    pub fn needs_executable(&self) -> bool {
+        matches!(self.group, CliGroupBy::Executable)
+    }
+}
+
+impl LiveArgs {
+    pub fn effective_limit(&self) -> usize {
+        if self.all { usize::MAX } else { self.limit }
+    }
+
+    pub fn needs_command(&self) -> bool {
+        self.filters.needs_command() || matches!(self.group, CliGroupBy::Command)
+    }
+
+    pub fn needs_executable(&self) -> bool {
+        matches!(self.group, CliGroupBy::Executable)
+    }
+}
+
+impl RecordArgs {
+    pub fn effective_limit(&self) -> usize {
+        if self.all { usize::MAX } else { self.limit }
+    }
+
+    pub fn effective_include_idle(&self) -> bool {
+        self.all || self.include_idle
+    }
+
+    pub fn needs_command(&self) -> bool {
+        self.filters.needs_command() || matches!(self.group, CliGroupBy::Command)
+    }
+
+    pub fn needs_executable(&self) -> bool {
+        matches!(self.group, CliGroupBy::Executable)
     }
 }

@@ -43,3 +43,16 @@ pub fn validate_recording_timing(
 
     Ok(())
 }
+
+pub fn validate_interval(
+    interval: Duration,
+    minimum_interval: Duration,
+) -> Result<(), RescopeError> {
+    if interval < minimum_interval {
+        return Err(RescopeError::IntervalTooShort {
+            minimum_ms: minimum_interval.as_millis(),
+        });
+    }
+
+    Ok(())
+}

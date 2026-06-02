@@ -10,6 +10,22 @@ pub fn sort_recording_rows(rows: &mut [AggregateRow], sort_by: SortBy) {
     rows.sort_by(|left, right| recording_cmp(left, right, sort_by));
 }
 
+pub fn sort_snapshot_rows_limit(rows: &mut Vec<SnapshotRow>, sort_by: SortBy, limit: usize) {
+    if limit < rows.len() {
+        rows.select_nth_unstable_by(limit, |left, right| snapshot_cmp(left, right, sort_by));
+        rows.truncate(limit);
+    }
+    sort_snapshot_rows(rows, sort_by);
+}
+
+pub fn sort_recording_rows_limit(rows: &mut Vec<AggregateRow>, sort_by: SortBy, limit: usize) {
+    if limit < rows.len() {
+        rows.select_nth_unstable_by(limit, |left, right| recording_cmp(left, right, sort_by));
+        rows.truncate(limit);
+    }
+    sort_recording_rows(rows, sort_by);
+}
+
 fn snapshot_cmp(left: &SnapshotRow, right: &SnapshotRow, sort_by: SortBy) -> Ordering {
     match sort_by {
         SortBy::Cpu => desc_f32(left.cpu_percent, right.cpu_percent),

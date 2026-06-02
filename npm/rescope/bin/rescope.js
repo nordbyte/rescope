@@ -21,13 +21,37 @@ function candidatePaths() {
   const triple = targetTriple();
   const exe = process.platform === "win32" ? "rescope.exe" : "rescope";
   const here = path.resolve(__dirname, "..");
+  const optionalPackage = optionalPackageName();
 
   return [
     process.env.RESCOPE_BINARY,
+    optionalPackage && resolveOptionalPackageBinary(optionalPackage, exe),
     path.join(here, "vendor", triple, exe),
     path.resolve(here, "..", "..", "target", "release", exe),
     path.resolve(here, "..", "..", "target", "debug", exe)
   ].filter(Boolean);
+}
+
+function optionalPackageName() {
+  const platform = process.platform;
+  const arch = process.arch;
+
+  if (platform === "linux" && arch === "x64") return "@rescope/rescope-linux-x64";
+  if (platform === "linux" && arch === "arm64") return "@rescope/rescope-linux-arm64";
+  if (platform === "darwin" && arch === "x64") return "@rescope/rescope-darwin-x64";
+  if (platform === "darwin" && arch === "arm64") return "@rescope/rescope-darwin-arm64";
+  if (platform === "win32" && arch === "x64") return "@rescope/rescope-win32-x64";
+
+  return null;
+}
+
+function resolveOptionalPackageBinary(packageName, exe) {
+  try {
+    const packageJson = require.resolve(`${packageName}/package.json`);
+    return path.join(path.dirname(packageJson), "bin", exe);
+  } catch {
+    return null;
+  }
 }
 
 let candidates;

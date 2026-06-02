@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use crate::metrics::{
     AggregateRow, GroupBy, GroupKey, RawProcessSample, SnapshotRow, SortBy, SystemSample,
 };
-use crate::sort::{sort_recording_rows, sort_snapshot_rows};
+use crate::sort::{sort_recording_rows_limit, sort_snapshot_rows_limit};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RecordingAggregateOptions {
@@ -42,8 +42,7 @@ pub fn aggregate_snapshot(
         .into_values()
         .map(|acc| acc.into_row(interval_seconds))
         .collect();
-    sort_snapshot_rows(&mut rows, sort_by);
-    rows.truncate(limit);
+    sort_snapshot_rows_limit(&mut rows, sort_by, limit);
     rows
 }
 
@@ -51,11 +50,19 @@ pub fn aggregate_recording(
     samples: &[SystemSample],
     options: RecordingAggregateOptions,
 ) -> Vec<AggregateRow> {
-    let interval_seconds = duration_seconds(options.interval);
-    let measured_seconds = duration_seconds(options.measured_duration).max(interval_seconds);
+    let fallback_interval_seconds = duration_seconds(options.interval);
+    let measured_seconds =
+        duration_seconds(options.measured_duration).max(fallback_interval_seconds);
+    let started_at = samples.first().map(|sample| sample.timestamp);
+    let ended_at = samples.last().map(|sample| sample.timestamp);
     let mut rows_by_key: HashMap<GroupKey, RecordingAcc> = HashMap::new();
 
     for sample in samples {
+        let sample_interval_seconds = if sample.sample_interval.is_zero() {
+            fallback_interval_seconds
+        } else {
+            duration_seconds(sample.sample_interval)
+        };
         let grouped = group_sample_for_recording(
             sample,
             options.group_by,
@@ -66,23 +73,16 @@ pub fn aggregate_recording(
             rows_by_key
                 .entry(key.clone())
                 .or_insert_with(|| RecordingAcc::new(key, options.group_by, &group_sample))
-                .add(&group_sample, interval_seconds);
+                .add(&group_sample, sample_interval_seconds);
         }
     }
 
     let mut rows: Vec<AggregateRow> = rows_by_key
         .into_values()
-        .filter(|acc| {
-            options.include_idle
-                || acc.cpu_core_seconds > 0.0
-                || acc.disk_read_total_bytes > 0
-                || acc.disk_write_total_bytes > 0
-                || acc.ram_max_bytes > 0
-        })
-        .map(|acc| acc.into_row(measured_seconds))
+        .filter(|acc| options.include_idle || acc.has_activity())
+        .map(|acc| acc.into_row(measured_seconds, started_at, ended_at))
         .collect();
-    sort_recording_rows(&mut rows, options.sort_by);
-    rows.truncate(options.limit);
+    sort_recording_rows_limit(&mut rows, options.sort_by, options.limit);
     rows
 }
 
@@ -110,6 +110,26 @@ fn group_key(process: &RawProcessSample, group_by: GroupBy) -> GroupKey {
         GroupBy::Process => GroupKey::Process(process.identity.clone()),
         GroupBy::Name => GroupKey::Name(process.identity.name.clone()),
         GroupBy::User => GroupKey::User(process.user_display()),
+        GroupBy::Command => GroupKey::Command(
+            process
+                .command
+                .clone()
+                .filter(|command| !command.trim().is_empty())
+                .unwrap_or_else(|| process.identity.name.clone()),
+        ),
+        GroupBy::Executable => GroupKey::Executable(
+            process
+                .executable
+                .clone()
+                .filter(|path| !path.trim().is_empty())
+                .unwrap_or_else(|| "unknown".to_string()),
+        ),
+        GroupBy::Parent => GroupKey::Parent(
+            process
+                .parent_pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
+        ),
     }
 }
 
@@ -171,13 +191,27 @@ impl SnapshotAcc {
             GroupBy::Process => process.display_process(show_command),
             GroupBy::Name => process.identity.name.clone(),
             GroupBy::User => process.user_display(),
+            GroupBy::Command => process
+                .command
+                .clone()
+                .filter(|command| !command.trim().is_empty())
+                .unwrap_or_else(|| process.identity.name.clone()),
+            GroupBy::Executable => process
+                .executable
+                .clone()
+                .filter(|path| !path.trim().is_empty())
+                .unwrap_or_else(|| "unknown".to_string()),
+            GroupBy::Parent => process
+                .parent_pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
         };
         Self {
             key,
             group_type,
             display_name,
             pid: (group_type == GroupBy::Process).then_some(process.identity.pid),
-            user_name: (group_type != GroupBy::User).then(|| process.user_display()),
+            user_name: matches!(group_type, GroupBy::Process).then(|| process.user_display()),
             users: BTreeSet::new(),
             process_count: 0,
             cpu_percent: 0.0,
@@ -261,11 +295,25 @@ impl GroupSample {
             GroupBy::Process => process.display_process(show_command),
             GroupBy::Name => process.identity.name.clone(),
             GroupBy::User => process.user_display(),
+            GroupBy::Command => process
+                .command
+                .clone()
+                .filter(|command| !command.trim().is_empty())
+                .unwrap_or_else(|| process.identity.name.clone()),
+            GroupBy::Executable => process
+                .executable
+                .clone()
+                .filter(|path| !path.trim().is_empty())
+                .unwrap_or_else(|| "unknown".to_string()),
+            GroupBy::Parent => process
+                .parent_pid
+                .map(|pid| pid.to_string())
+                .unwrap_or_else(|| "unknown".to_string()),
         };
         Self {
             display_name,
             pid: (group_type == GroupBy::Process).then_some(process.identity.pid),
-            user_name: (group_type != GroupBy::User).then(|| process.user_display()),
+            user_name: matches!(group_type, GroupBy::Process).then(|| process.user_display()),
             users: BTreeSet::new(),
             process_count: 0,
             cpu_percent: 0.0,
@@ -320,6 +368,9 @@ struct RecordingAcc {
     first_seen: SystemTime,
     last_seen: SystemTime,
     ram_timeline: Vec<(SystemTime, u64)>,
+    cpu_timeline: Vec<(SystemTime, f32)>,
+    read_timeline: Vec<(SystemTime, u64)>,
+    write_timeline: Vec<(SystemTime, u64)>,
 }
 
 impl RecordingAcc {
@@ -346,7 +397,17 @@ impl RecordingAcc {
             first_seen: sample.timestamp,
             last_seen: sample.timestamp,
             ram_timeline: Vec::new(),
+            cpu_timeline: Vec::new(),
+            read_timeline: Vec::new(),
+            write_timeline: Vec::new(),
         }
+    }
+
+    fn has_activity(&self) -> bool {
+        self.cpu_core_seconds > 0.0
+            || self.disk_read_total_bytes > 0
+            || self.disk_write_total_bytes > 0
+            || self.ram_start_bytes != self.ram_end_bytes
     }
 
     fn add(&mut self, sample: &GroupSample, interval_seconds: f64) {
@@ -364,6 +425,12 @@ impl RecordingAcc {
         self.last_seen = sample.timestamp;
         self.ram_timeline
             .push((sample.timestamp, sample.memory_bytes));
+        self.cpu_timeline
+            .push((sample.timestamp, sample.cpu_percent));
+        self.read_timeline
+            .push((sample.timestamp, sample.read_delta_bytes));
+        self.write_timeline
+            .push((sample.timestamp, sample.write_delta_bytes));
 
         if let Some((name, contribution)) = &sample.top_process
             && self
@@ -375,7 +442,12 @@ impl RecordingAcc {
         }
     }
 
-    fn into_row(self, measured_seconds: f64) -> AggregateRow {
+    fn into_row(
+        self,
+        measured_seconds: f64,
+        recording_started_at: Option<SystemTime>,
+        recording_ended_at: Option<SystemTime>,
+    ) -> AggregateRow {
         let ram_avg_bytes = if self.ram_sample_count == 0 {
             0
         } else {
@@ -409,9 +481,36 @@ impl RecordingAcc {
             io_bytes_per_second_avg: disk_io_total_bytes as f64 / measured_seconds,
             first_seen: self.first_seen,
             last_seen: self.last_seen,
+            lifecycle_status: lifecycle_status(
+                self.first_seen,
+                self.last_seen,
+                recording_started_at,
+                recording_ended_at,
+            ),
             ram_timeline: self.ram_timeline,
+            cpu_timeline: self.cpu_timeline,
+            read_timeline: self.read_timeline,
+            write_timeline: self.write_timeline,
         }
     }
+}
+
+fn lifecycle_status(
+    first_seen: SystemTime,
+    last_seen: SystemTime,
+    recording_started_at: Option<SystemTime>,
+    recording_ended_at: Option<SystemTime>,
+) -> String {
+    let visible_at_start = recording_started_at == Some(first_seen);
+    let visible_at_end = recording_ended_at == Some(last_seen);
+
+    match (visible_at_start, visible_at_end) {
+        (true, true) => "observed_full_duration",
+        (false, true) => "started_during_recording",
+        (true, false) => "exited_during_recording",
+        (false, false) => "started_and_exited_during_recording",
+    }
+    .to_string()
 }
 
 #[cfg(test)]
@@ -441,7 +540,9 @@ mod tests {
             },
             user_id: Some(user.to_string()),
             user_name: Some(user.to_string()),
-            command: None,
+            parent_pid: Some(1),
+            executable: Some(format!("/usr/bin/{name}")),
+            command: Some(format!("/usr/bin/{name} --flag")),
             memory_bytes: ram,
             virtual_memory_bytes: ram * 2,
             cpu_percent: cpu,
@@ -459,6 +560,20 @@ mod tests {
             available_memory_bytes: 500,
             global_cpu_percent: 10.0,
             processes,
+            sample_interval: Duration::from_secs(1),
+            logical_cpu_count: 4,
+        }
+    }
+
+    fn system_at(timestamp: SystemTime, processes: Vec<RawProcessSample>) -> SystemSample {
+        SystemSample {
+            timestamp,
+            total_memory_bytes: 1000,
+            available_memory_bytes: 500,
+            global_cpu_percent: 10.0,
+            processes,
+            sample_interval: Duration::from_secs(1),
+            logical_cpu_count: 4,
         }
     }
 
@@ -534,5 +649,76 @@ mod tests {
         assert!((rows[0].cpu_core_seconds - 1.5).abs() < f64::EPSILON);
         assert_eq!(rows[0].ram_delta_bytes, 100);
         assert_eq!(rows[0].disk_write_total_bytes, 30);
+    }
+
+    #[test]
+    fn groups_by_command_executable_and_parent() {
+        let sample = system(vec![
+            process(1, 1, "node", "alice", 10.0, 100, (10, 5)),
+            process(2, 1, "node", "alice", 20.0, 200, (0, 5)),
+        ]);
+
+        let command_rows = aggregate_snapshot(
+            &sample,
+            GroupBy::Command,
+            SortBy::Name,
+            Duration::from_secs(1),
+            false,
+            10,
+        );
+        assert_eq!(command_rows.len(), 1);
+        assert!(command_rows[0].display_name.contains("/usr/bin/node"));
+
+        let executable_rows = aggregate_snapshot(
+            &sample,
+            GroupBy::Executable,
+            SortBy::Name,
+            Duration::from_secs(1),
+            false,
+            10,
+        );
+        assert_eq!(executable_rows[0].display_name, "/usr/bin/node");
+
+        let parent_rows = aggregate_snapshot(
+            &sample,
+            GroupBy::Parent,
+            SortBy::Name,
+            Duration::from_secs(1),
+            false,
+            10,
+        );
+        assert_eq!(parent_rows[0].display_name, "1");
+    }
+
+    #[test]
+    fn recording_reports_lifecycle_status() {
+        let first = SystemTime::UNIX_EPOCH;
+        let second = first + Duration::from_secs(1);
+        let samples = vec![
+            system_at(
+                first,
+                vec![process(1, 1, "node", "alice", 0.0, 100, (0, 0))],
+            ),
+            system_at(
+                second,
+                vec![process(2, 1, "bun", "alice", 1.0, 200, (0, 0))],
+            ),
+        ];
+
+        let rows = aggregate_recording(
+            &samples,
+            RecordingAggregateOptions {
+                group_by: GroupBy::Process,
+                sort_by: SortBy::Pid,
+                interval: Duration::from_secs(1),
+                measured_duration: Duration::from_secs(2),
+                show_command: false,
+                limit: 10,
+                include_idle: true,
+            },
+        );
+
+        assert_eq!(rows[0].lifecycle_status, "exited_during_recording");
+        assert_eq!(rows[1].lifecycle_status, "started_during_recording");
     }
 }

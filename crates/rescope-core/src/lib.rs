@@ -12,7 +12,8 @@ pub use error::RescopeError;
 pub use filter::filter_sample;
 pub use metrics::*;
 pub use report::{
-    RecordingReportOptions, build_recording_report, build_snapshot_report, platform_notes,
+    RecordingReportOptions, SnapshotReportOptions, build_recording_report, build_snapshot_report,
+    platform_notes,
 };
 pub use sampling::{SampleSource, SamplerConfig, SysinfoSampler};
 pub use units::{format_bps, format_bytes, format_signed_bytes, parse_duration, sparkline};

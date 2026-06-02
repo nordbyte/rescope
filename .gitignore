@@ -3,3 +3,7 @@
 node_modules/
 *.log
 rescope_codex_prompt.md
+docs/node_modules
+docs/node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/

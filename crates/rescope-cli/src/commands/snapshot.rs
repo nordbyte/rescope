@@ -1,15 +1,21 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rescope_core::{
-    SampleSource, SamplerConfig, SysinfoSampler, build_snapshot_report, filter_sample,
+    SampleSource, SamplerConfig, SnapshotReportOptions, SysinfoSampler, build_snapshot_report,
+    filter_sample, units::MINIMUM_INTERVAL,
 };
 
 use crate::args::{Cli, SnapshotArgs};
 use crate::output::{csv, json, table};
 
 pub fn run(cli: &Cli, args: &SnapshotArgs) -> Result<()> {
+    if cli.stdout_export_count() > 1 {
+        bail!("only one of --json - or --csv - can write to stdout");
+    }
+    rescope_core::error::validate_interval(args.interval, MINIMUM_INTERVAL)?;
     let filter = args.filters.to_filter_spec();
     let mut sampler = SysinfoSampler::new(SamplerConfig {
-        include_command: args.filters.needs_command(),
+        include_command: args.needs_command(),
+        include_executable: args.needs_executable(),
     })?;
     sampler.warm_up(args.interval)?;
 
@@ -17,12 +23,15 @@ pub fn run(cli: &Cli, args: &SnapshotArgs) -> Result<()> {
     let filtered = filter_sample(&sample, &filter);
     let report = build_snapshot_report(
         &filtered,
-        args.interval,
-        args.group.into(),
-        args.sort.into(),
-        filter,
-        args.filters.show_command,
-        args.limit,
+        SnapshotReportOptions {
+            interval: args.interval,
+            group_by: args.group.into(),
+            sort_by: args.sort.into(),
+            filters: filter,
+            show_command: args.filters.show_command,
+            limit: args.effective_limit(),
+            normalize_cpu: args.normalize_cpu,
+        },
     );
 
     if let Some(path) = &cli.json {
@@ -34,8 +43,13 @@ pub fn run(cli: &Cli, args: &SnapshotArgs) -> Result<()> {
             .with_context(|| format!("writing {}", path.display()))?;
     }
 
-    if !cli.quiet {
-        table::print_snapshot(&report, cli.bytes, args.show_system || !cli.quiet);
+    if !cli.quiet && !json::writes_stdout(&cli.json) && !csv::writes_stdout(&cli.csv) {
+        table::print_snapshot(
+            &report,
+            cli.bytes,
+            args.show_system || !cli.quiet,
+            cli.color_enabled(),
+        );
     }
 
     Ok(())

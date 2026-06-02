@@ -1,14 +1,14 @@
-#[cfg(feature = "tui")]
 pub mod app;
-#[cfg(feature = "tui")]
 pub mod view;
 
-#[cfg(not(feature = "tui"))]
-pub fn is_available() -> bool {
-    false
-}
+use anyhow::Result;
 
-#[cfg(feature = "tui")]
+use crate::args::{Cli, LiveArgs};
+
 pub fn is_available() -> bool {
     true
+}
+
+pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
+    app::run_live(cli, args)
 }

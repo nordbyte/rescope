@@ -18,6 +18,7 @@ pub trait SampleSource {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SamplerConfig {
     pub include_command: bool,
+    pub include_executable: bool,
 }
 
 #[derive(Debug)]
@@ -26,6 +27,7 @@ pub struct SysinfoSampler {
     users: Users,
     previous: HashMap<ProcessIdentity, PreviousCounters>,
     config: SamplerConfig,
+    last_sample_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -42,7 +44,7 @@ impl SysinfoSampler {
             RefreshKind::nothing()
                 .with_memory(MemoryRefreshKind::everything())
                 .with_cpu(CpuRefreshKind::everything())
-                .with_processes(process_refresh_kind(config.include_command)),
+                .with_processes(process_refresh_kind(config)),
         );
         system.refresh_memory();
         system.refresh_cpu_usage();
@@ -52,24 +54,31 @@ impl SysinfoSampler {
             users: Users::new_with_refreshed_list(),
             previous: HashMap::new(),
             config,
+            last_sample_at: None,
         })
     }
 
     pub fn warm_up(&mut self, interval: Duration) -> Result<(), RescopeError> {
         self.refresh_once();
         thread::sleep(interval.max(MINIMUM_CPU_UPDATE_INTERVAL));
-        self.refresh_once();
         Ok(())
     }
 
     fn refresh_once(&mut self) -> SystemSample {
+        let instant = Instant::now();
+        let sample_interval = self
+            .last_sample_at
+            .map(|last| instant.saturating_duration_since(last))
+            .unwrap_or_default();
+        self.last_sample_at = Some(instant);
+
         let timestamp = SystemTime::now();
         self.system.refresh_memory();
         self.system.refresh_cpu_usage();
         self.system.refresh_processes_specifics(
             ProcessesToUpdate::All,
             true,
-            process_refresh_kind(self.config.include_command),
+            process_refresh_kind(self.config),
         );
         self.users.refresh();
 
@@ -108,12 +117,25 @@ impl SysinfoSampler {
                 .user_id()
                 .and_then(|uid| self.users.get_user_by_id(uid))
                 .map(|user| user.name().to_string());
+            let parent_pid = process.parent().map(|pid| pid.as_u32());
+            let executable = self
+                .config
+                .include_executable
+                .then(|| {
+                    process
+                        .exe()
+                        .map(|path| path.to_string_lossy().trim().to_string())
+                })
+                .flatten()
+                .filter(|path| !path.is_empty());
 
             processes.push(RawProcessSample {
                 timestamp,
                 identity,
                 user_id,
                 user_name,
+                parent_pid,
+                executable,
                 command: self
                     .config
                     .include_command
@@ -137,6 +159,8 @@ impl SysinfoSampler {
             available_memory_bytes: self.system.available_memory(),
             global_cpu_percent: self.system.global_cpu_usage(),
             processes,
+            sample_interval,
+            logical_cpu_count: self.system.cpus().len().max(1),
         }
     }
 }
@@ -157,19 +181,22 @@ impl SampleSource for Vec<SystemSample> {
     }
 }
 
-fn process_refresh_kind(include_command: bool) -> ProcessRefreshKind {
-    let kind = ProcessRefreshKind::nothing()
+fn process_refresh_kind(config: SamplerConfig) -> ProcessRefreshKind {
+    let mut kind = ProcessRefreshKind::nothing()
         .with_memory()
         .with_cpu()
         .with_disk_usage()
         .with_user(UpdateKind::OnlyIfNotSet)
         .without_tasks();
 
-    if include_command {
-        kind.with_cmd(UpdateKind::OnlyIfNotSet)
-    } else {
-        kind
+    if config.include_command {
+        kind = kind.with_cmd(UpdateKind::OnlyIfNotSet);
     }
+    if config.include_executable {
+        kind = kind.with_exe(UpdateKind::OnlyIfNotSet);
+    }
+
+    kind
 }
 
 fn os_to_string(value: &std::ffi::OsStr) -> Option<String> {
@@ -215,6 +242,8 @@ mod tests {
             available_memory_bytes: 1,
             global_cpu_percent: 0.0,
             processes: Vec::new(),
+            sample_interval: Duration::from_secs(1),
+            logical_cpu_count: 1,
         };
         let mut source = vec![sample.clone()];
         assert_eq!(source.sample().unwrap().total_memory_bytes, 1);

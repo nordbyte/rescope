@@ -8,6 +8,9 @@ pub enum GroupBy {
     Process,
     Name,
     User,
+    Command,
+    Executable,
+    Parent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +49,8 @@ pub struct RawProcessSample {
     pub identity: ProcessIdentity,
     pub user_id: Option<String>,
     pub user_name: Option<String>,
+    pub parent_pid: Option<u32>,
+    pub executable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     pub memory_bytes: u64,
@@ -86,6 +91,12 @@ pub struct SystemSample {
     pub available_memory_bytes: u64,
     pub global_cpu_percent: f32,
     pub processes: Vec<RawProcessSample>,
+    #[serde(
+        rename = "sample_interval_ms",
+        serialize_with = "serialize_duration_ms"
+    )]
+    pub sample_interval: Duration,
+    pub logical_cpu_count: usize,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize)]
@@ -94,6 +105,9 @@ pub enum GroupKey {
     Process(ProcessIdentity),
     Name(String),
     User(String),
+    Command(String),
+    Executable(String),
+    Parent(String),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -150,8 +164,15 @@ pub struct AggregateRow {
     pub first_seen: SystemTime,
     #[serde(serialize_with = "serialize_system_time_ms")]
     pub last_seen: SystemTime,
+    pub lifecycle_status: String,
     #[serde(serialize_with = "serialize_timeline_ms")]
     pub ram_timeline: Vec<(SystemTime, u64)>,
+    #[serde(serialize_with = "serialize_f32_timeline_ms")]
+    pub cpu_timeline: Vec<(SystemTime, f32)>,
+    #[serde(serialize_with = "serialize_timeline_ms")]
+    pub read_timeline: Vec<(SystemTime, u64)>,
+    #[serde(serialize_with = "serialize_timeline_ms")]
+    pub write_timeline: Vec<(SystemTime, u64)>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -172,6 +193,8 @@ pub struct SnapshotReport {
     pub available_memory_bytes: u64,
     pub global_cpu_percent: f32,
     pub process_total: usize,
+    pub logical_cpu_count: usize,
+    pub cpu_normalized: bool,
     pub rows: Vec<SnapshotRow>,
     pub notes: Vec<String>,
 }
@@ -190,6 +213,8 @@ pub struct RecordingReport {
     pub group_by: GroupBy,
     pub sort_by: SortBy,
     pub filters: FilterSpec,
+    pub logical_cpu_count: usize,
+    pub cpu_normalized: bool,
     pub rows: Vec<AggregateRow>,
     pub notes: Vec<String>,
 }
@@ -224,6 +249,20 @@ where
     let converted: Vec<(u64, u64)> = timeline
         .iter()
         .map(|(timestamp, memory)| (system_time_ms(*timestamp), *memory))
+        .collect();
+    converted.serialize(serializer)
+}
+
+pub fn serialize_f32_timeline_ms<S>(
+    timeline: &[(SystemTime, f32)],
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let converted: Vec<(u64, f32)> = timeline
+        .iter()
+        .map(|(timestamp, value)| (system_time_ms(*timestamp), *value))
         .collect();
     converted.serialize(serializer)
 }

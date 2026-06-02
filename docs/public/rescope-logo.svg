@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="rescope logo">
+  <rect width="240" height="240" rx="36" fill="#116466"/>
+  <path d="M44 126c29-62 86-92 164-82" fill="none" stroke="#f4d35e" stroke-width="18" stroke-linecap="round"/>
+  <path d="M44 170c47-72 104-99 164-68" fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round"/>
+  <circle cx="170" cy="82" r="20" fill="#ffffff"/>
+  <circle cx="170" cy="82" r="8" fill="#116466"/>
+</svg>

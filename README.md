@@ -1,53 +1,93 @@
 # rescope
 
+[![CI](https://img.shields.io/github/actions/workflow/status/nordbyte/rescope/ci.yml?branch=main&style=flat-square)](https://github.com/nordbyte/rescope/actions/workflows/ci.yml) [![Docs](https://img.shields.io/github/actions/workflow/status/nordbyte/rescope/pages.yml?branch=main&label=docs&style=flat-square)](https://github.com/nordbyte/rescope/actions/workflows/pages.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-ffd60a?style=flat-square)](LICENSE) [![Rust](https://img.shields.io/badge/Rust-2024-b7410e?logo=rust&logoColor=white&style=flat-square)](Cargo.toml) [![npm](https://img.shields.io/badge/npm-rescope-cb3837?logo=npm&logoColor=white&style=flat-square)](npm/rescope/package.json)
+
 Inspect and record resource usage by process and user.
 
-`rescope` is a Rust CLI for live snapshots and time-bounded reports of CPU, RAM and per-process I/O usage. It groups by process, process name or user, and can export JSON and CSV.
+Use the README for the first install and quick start. Full documentation is available in [docs/](docs/index.md) and is deployed with GitHub Pages.
 
-## Installation
+## What rescope shows
+
+- CPU usage per process and aggregated by user, name, command, executable or parent PID.
+- Resident memory per process and aggregate RAM start/end/min/max/average/delta during recordings.
+- Per-process read and write counters with safe deltas.
+- Live views in plain refresh mode or interactive terminal mode.
+- Time-bounded recording reports with lifecycle status and metric timelines.
+- JSON and CSV exports to files or stdout.
+
+## Install
+
+From source:
+
+```bash
+git clone https://github.com/nordbyte/rescope.git
+cd rescope
+cargo build -p rescope-cli --release
+./target/release/rescope --help
+```
+
+Local development:
+
+```bash
+cargo run -p rescope-cli -- snapshot --limit 10
+```
+
+npm wrapper smoke test:
+
+```bash
+cargo build -p rescope-cli
+cd npm/rescope
+node bin/rescope.js snapshot --limit 10
+```
+
+Published install commands, once packages are released:
 
 ```bash
 cargo install rescope
 npm install -g rescope
 ```
 
-The npm package is a wrapper around the native Rust binary. It does not implement metric collection in JavaScript.
-
-## Usage
+## Quick start
 
 ```bash
-rescope
-rescope snapshot
+rescope snapshot --limit 10
 rescope snapshot --group user --sort ram --limit 10
-rescope live --group user
-rescope live --sort io --interval 2s --limit 30
-rescope record --duration 1m
-rescope record --duration 1m --user postgres
-rescope record --duration 1m --name node --json report.json
-rescope record --duration 30s --pid 1234 --csv report.csv
+rescope snapshot --group executable --sort io --all
+rescope live --tui --group command --sort cpu
+rescope live --once --json -
+rescope record --duration 1m --interval 1s --group user
+rescope record --duration 30s --name node --json report.json --csv report.csv
 ```
 
-`rescope` without a subcommand is equivalent to `rescope live`.
-
-## Metrics
-
-CPU values are sampled through `sysinfo` and require a warm-up refresh. Process CPU can exceed `100%` on multi-core systems. Recording reports compute CPU core-seconds as `(cpu_percent / 100) * interval_seconds`.
-
-RAM is reported as resident memory when the platform exposes it that way. Recording reports track RAM start, end, min, max, average, delta and a compact terminal sparkline.
-
-Per-process reads and writes are calculated from total I/O counters using safe deltas. The first time a process identity appears, its read/write deltas are `0` so old activity is not counted as part of the recording.
-
-## Platform Notes
-
-Linux x86_64 is the MVP priority, followed by macOS x86_64/aarch64 and Windows x86_64. If a platform cannot provide a metric, `rescope` falls back to `unknown`, `n/a` or `0` instead of crashing.
-
-On Windows, per-process I/O counters may include non-disk I/O depending on the OS counters. On Unix-like systems, cached file operations may not always increase disk counters.
+Running `rescope` without a subcommand is equivalent to `rescope live`.
 
 ## Privacy
 
-Command lines are hidden by default because they can contain secrets. Use `--show-command` to display them. `--cmd` filters command lines internally without changing the default report display.
+Command lines are hidden by default because they can contain secrets. Use `--show-command` to display them in process rows. `--cmd` filters command lines internally without changing the default display. `--group command` intentionally displays command lines because command aggregation is explicitly requested.
 
 `rescope` is read-only, requires no root privileges, performs no network requests and sends no telemetry.
+
+## Metrics
+
+CPU values can exceed `100%` on multi-core systems. Use `--normalize-cpu` to display CPU as a share of all logical CPUs. Recording reports calculate CPU core-seconds from the actual elapsed sample interval.
+
+RAM is resident memory when the platform exposes it that way. Disk I/O is platform-dependent: cached operations may not increase counters on Unix-like systems, and Windows counters may include non-disk I/O depending on the OS API.
+
+Recording reports hide rows with no CPU, I/O or RAM movement by default. Use `--include-idle` to keep the current limit and include them, or `--all` to include every row.
+
+## Documentation
+
+| Topic | Link |
+| --- | --- |
+| Installation | [docs/start/install.md](docs/start/install.md) |
+| Quickstart | [docs/start/quickstart.md](docs/start/quickstart.md) |
+| Live monitoring | [docs/guides/live.md](docs/guides/live.md) |
+| Recording reports | [docs/guides/recording.md](docs/guides/recording.md) |
+| Filters and grouping | [docs/guides/filters-grouping.md](docs/guides/filters-grouping.md) |
+| Exports | [docs/guides/exports.md](docs/guides/exports.md) |
+| CLI command reference | [docs/commands/index.md](docs/commands/index.md) |
+| Metrics reference | [docs/reference/metrics.md](docs/reference/metrics.md) |
+| Architecture | [docs/internals/architecture.md](docs/internals/architecture.md) |
 
 ## Development
 
@@ -55,8 +95,11 @@ Command lines are hidden by default because they can contain secrets. Use `--sho
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo run -p rescope-cli -- snapshot
-cargo run -p rescope-cli -- record --duration 5s --interval 1s --limit 10
+npm run docs:check
 ```
 
-Interactive TUI mode is planned; current live mode uses plain terminal refresh. The optional `tui` feature keeps the crate layout ready for a later `ratatui` implementation.
+Build the documentation:
+
+```bash
+npm run docs:build
+```

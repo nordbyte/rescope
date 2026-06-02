@@ -26,6 +26,7 @@ ratatui = { workspace = true, optional = true }
 rescope-core.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+tempfile.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true

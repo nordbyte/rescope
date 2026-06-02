@@ -1,7 +1,7 @@
 use std::thread;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rescope_core::{
     RecordingReportOptions, SampleSource, SamplerConfig, SysinfoSampler, build_recording_report,
     filter_sample, units::MINIMUM_INTERVAL,
@@ -11,11 +11,15 @@ use crate::args::{Cli, RecordArgs};
 use crate::output::{csv, json, table};
 
 pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
+    if cli.stdout_export_count() > 1 {
+        bail!("only one of --json - or --csv - can write to stdout");
+    }
     rescope_core::error::validate_recording_timing(args.duration, args.interval, MINIMUM_INTERVAL)?;
 
     let filter = args.filters.to_filter_spec();
     let mut sampler = SysinfoSampler::new(SamplerConfig {
-        include_command: args.filters.needs_command(),
+        include_command: args.needs_command(),
+        include_executable: args.needs_executable(),
     })?;
     sampler.warm_up(args.interval)?;
 
@@ -50,8 +54,9 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
             sort_by: args.sort.into(),
             filters: filter,
             show_command: args.filters.show_command,
-            limit: args.limit,
-            include_idle: args.include_idle,
+            limit: args.effective_limit(),
+            include_idle: args.effective_include_idle(),
+            normalize_cpu: args.normalize_cpu,
         },
     );
 
@@ -64,8 +69,8 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
             .with_context(|| format!("writing {}", path.display()))?;
     }
 
-    if !cli.quiet {
-        table::print_recording(&report, cli.bytes, args.timeline);
+    if !cli.quiet && !json::writes_stdout(&cli.json) && !csv::writes_stdout(&cli.csv) {
+        table::print_recording(&report, cli.bytes, args.timeline, cli.color_enabled());
     }
 
     Ok(())

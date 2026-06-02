@@ -84,6 +84,8 @@ mod tests {
             },
             user_id: Some("1000".to_string()),
             user_name: Some("alice".to_string()),
+            parent_pid: Some(1),
+            executable: Some("/usr/bin/node".to_string()),
             command: Some("/usr/bin/node server.js".to_string()),
             memory_bytes: 1,
             virtual_memory_bytes: 2,

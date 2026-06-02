@@ -18,6 +18,8 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo test --workspace
+      - name: Docs check
+        run: npm run docs:check
       - name: Snapshot smoke
         run: cargo run -p rescope-cli -- snapshot --limit 5
       - name: Record smoke
