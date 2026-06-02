@@ -12,9 +12,9 @@ use crossterm::terminal::{
 };
 use rescope_core::{
     FilterSpec, GroupBy, RawProcessSample, RecordingReport, RecordingReportOptions, SampleSource,
-    SamplerConfig, SnapshotReport, SnapshotReportOptions, SortBy, SysinfoSampler, SystemSample,
-    build_recording_report, build_snapshot_report, filter_sample, format_bps, format_bytes,
-    system_time_ms,
+    SamplerConfig, SnapshotReport, SnapshotReportOptions, SnapshotRow, SortBy, SysinfoSampler,
+    SystemSample, build_recording_report, build_snapshot_report, filter_sample, format_bps,
+    format_bytes, system_time_ms,
 };
 
 use crate::args::{Cli, LiveArgs};
@@ -147,7 +147,7 @@ pub struct TuiApp {
     last_recording_report: Option<RecordingReport>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 enum Overlay {
     None,
     Help,
@@ -180,7 +180,9 @@ enum Overlay {
         format: ExportFormat,
         input: String,
     },
-    Detail,
+    Detail {
+        row: Box<SnapshotRow>,
+    },
     Search {
         input: String,
     },
@@ -229,6 +231,18 @@ struct RecordingSession {
 struct Viewport {
     width: u16,
     height: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TuiStyle {
+    Header,
+    Section,
+    Label,
+    Success,
+    Warning,
+    Error,
+    Accent,
+    Muted,
 }
 
 impl TuiApp {
@@ -326,6 +340,19 @@ impl TuiApp {
             format,
             input: default_export_path(self, target, format),
         };
+    }
+
+    fn open_detail(&mut self) {
+        let Some(row) = self
+            .last_report
+            .as_ref()
+            .and_then(|report| report.rows.get(self.selected_row))
+            .cloned()
+        else {
+            self.set_status("no selected row");
+            return;
+        };
+        self.overlay = Overlay::Detail { row: Box::new(row) };
     }
 
     fn close_overlay(&mut self) {
@@ -700,7 +727,7 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> TuiIn
             format,
             input,
         } => handle_export_path_key(app, code, modifiers, target, format, input),
-        Overlay::Help | Overlay::Detail => handle_simple_overlay_key(app, code),
+        Overlay::Help | Overlay::Detail { .. } => handle_simple_overlay_key(app, code),
         Overlay::Options { .. }
         | Overlay::Sort { .. }
         | Overlay::Group { .. }
@@ -744,7 +771,7 @@ fn handle_main_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> 
         KeyCode::PageDown => app.move_selected_page(PickerDirection::Next),
         KeyCode::Enter => {
             if app.selected_row_count() > 0 {
-                app.overlay = Overlay::Detail;
+                app.open_detail();
             }
         }
         _ => return TuiInput::Tick,
@@ -864,7 +891,7 @@ fn move_overlay_selection(app: &mut TuiApp, direction: PickerDirection) {
         Overlay::Export { selected } => move_index(selected, EXPORT_ITEMS.len(), direction),
         Overlay::None
         | Overlay::Help
-        | Overlay::Detail
+        | Overlay::Detail { .. }
         | Overlay::Search { .. }
         | Overlay::ExportPath { .. } => {}
     }
@@ -880,7 +907,7 @@ fn apply_overlay_selection(app: &mut TuiApp) {
             4 => app.overlay = Overlay::Sampling { selected: 0 },
             5 => app.overlay = Overlay::Recording { selected: 0 },
             6 => app.overlay = Overlay::Export { selected: 0 },
-            7 => app.overlay = Overlay::Detail,
+            7 => app.open_detail(),
             8 => app.overlay = Overlay::Help,
             _ => app.close_overlay(),
         },
@@ -948,7 +975,7 @@ fn apply_overlay_selection(app: &mut TuiApp) {
         },
         Overlay::None
         | Overlay::Help
-        | Overlay::Detail
+        | Overlay::Detail { .. }
         | Overlay::Search { .. }
         | Overlay::ExportPath { .. } => {}
     }
@@ -969,14 +996,18 @@ fn move_index(selected: &mut usize, len: usize, direction: PickerDirection) {
 
 fn render_app(app: &TuiApp, report: &SnapshotReport, color: bool, viewport: Viewport) -> String {
     let mut output = String::new();
-    let overlay = format_overlay(app);
-    let footer = format_footer(app);
+    let overlay = format_overlay(app, color);
+    let footer = format_footer(app, color);
     let max_rows = table_max_rows(app, &overlay, &footer, viewport);
     let row_offset = row_offset_for_selection(app.selected_row, report.rows.len(), max_rows);
     let columns = columns_for_viewport(app, viewport);
 
-    output.push_str(&view::format_header(report, app.raw_bytes, app.tick_count));
-    output.push_str(&format_state_line(app, report));
+    output.push_str(&paint(
+        &view::format_header(report, app.raw_bytes, app.tick_count),
+        TuiStyle::Header,
+        color,
+    ));
+    output.push_str(&format_state_line(app, report, color));
     output.push_str(&table::render_snapshot_with_options(
         report,
         app.raw_bytes,
@@ -994,7 +1025,7 @@ fn render_app(app: &TuiApp, report: &SnapshotReport, color: bool, viewport: View
     output
 }
 
-fn format_state_line(app: &TuiApp, report: &SnapshotReport) -> String {
+fn format_state_line(app: &TuiApp, report: &SnapshotReport, color: bool) -> String {
     let mut output = String::new();
     let search = if app.search_query.is_empty() {
         "none"
@@ -1007,60 +1038,91 @@ fn format_state_line(app: &TuiApp, report: &SnapshotReport) -> String {
         format!("{}/{}", app.selected_row + 1, report.rows.len())
     };
     let status = if app.paused { "paused" } else { "live" };
+    let status = if app.paused {
+        paint(status, TuiStyle::Warning, color)
+    } else {
+        paint(status, TuiStyle::Success, color)
+    };
     let recording = app
         .recording
         .as_ref()
         .map(|recording| {
-            format!(
-                "recording {}/{}",
-                humantime::format_duration(recording.started_at.elapsed()),
-                humantime::format_duration(recording.duration)
+            paint(
+                &format!(
+                    "recording {}/{}",
+                    humantime::format_duration(recording.started_at.elapsed()),
+                    humantime::format_duration(recording.duration)
+                ),
+                TuiStyle::Accent,
+                color,
             )
         })
-        .unwrap_or_else(|| "recording off".to_string());
+        .unwrap_or_else(|| paint("recording off", TuiStyle::Muted, color));
     writeln!(
         &mut output,
-        "mode {status} | group {} | sort {} | limit {} | row {selected} | search {search} | {recording}",
+        "{} {status} | {} {} | {} {} | {} {} | {} {selected} | {} {search} | {recording}",
+        label("mode", color),
+        label("group", color),
         group_label(app.group_by),
+        label("sort", color),
         view::sort_label(app.sort_by),
+        label("limit", color),
         limit_label(app.limit),
+        label("row", color),
+        label("search", color),
     )
     .expect("writing to a string cannot fail");
     writeln!(
         &mut output,
-        "view normalized {} | bytes {} | command {} | filters {}",
+        "{} {} | {} {} | {} {} | {} {}",
+        label("normalized", color),
         on_off(app.normalize_cpu),
+        label("bytes", color),
         on_off(app.raw_bytes),
+        label("command", color),
         on_off(app.show_command),
+        label("filters", color),
         filter_summary(app)
     )
     .expect("writing to a string cannot fail");
     if let Some(message) = app.status_text() {
-        writeln!(&mut output, "status: {message}").expect("writing to a string cannot fail");
+        writeln!(
+            &mut output,
+            "{} {}",
+            label("status", color),
+            paint(message, status_message_style(message), color)
+        )
+        .expect("writing to a string cannot fail");
     }
     output.push('\n');
     output
 }
 
-fn format_overlay(app: &TuiApp) -> String {
+fn format_overlay(app: &TuiApp, color: bool) -> String {
     match &app.overlay {
         Overlay::None => String::new(),
-        Overlay::Help => format_help(),
-        Overlay::Options { selected } => format_menu("Options", OPTIONS_ITEMS, *selected, None),
-        Overlay::Sort { selected } => format_sort_menu(*selected, app.sort_by),
-        Overlay::Group { selected } => format_group_menu(*selected, app.group_by),
-        Overlay::Filter { selected } => format_filter_menu(*selected, app),
-        Overlay::View { selected } => format_view_menu(*selected, app),
-        Overlay::Sampling { selected } => format_sampling_menu(*selected, app),
-        Overlay::Recording { selected } => format_recording_menu(*selected, app),
-        Overlay::Export { selected } => format_export_menu(*selected, app),
+        Overlay::Help => format_help(color),
+        Overlay::Options { selected } => {
+            format_menu("Options", OPTIONS_ITEMS, *selected, None, color)
+        }
+        Overlay::Sort { selected } => format_sort_menu(*selected, app.sort_by, color),
+        Overlay::Group { selected } => format_group_menu(*selected, app.group_by, color),
+        Overlay::Filter { selected } => format_filter_menu(*selected, app, color),
+        Overlay::View { selected } => format_view_menu(*selected, app, color),
+        Overlay::Sampling { selected } => format_sampling_menu(*selected, app, color),
+        Overlay::Recording { selected } => format_recording_menu(*selected, app, color),
+        Overlay::Export { selected } => format_export_menu(*selected, app, color),
         Overlay::ExportPath {
             target,
             format,
             input,
-        } => format_export_path(*target, *format, input),
-        Overlay::Detail => format_detail(app),
-        Overlay::Search { input } => format!("Search\n> {input}\n\nEnter apply | Esc cancel\n\n"),
+        } => format_export_path(*target, *format, input, color),
+        Overlay::Detail { row } => format_detail(app, row, color),
+        Overlay::Search { input } => format!(
+            "{}\n{} {input}\n\nEnter apply | Esc cancel\n\n",
+            section_title("Search", color),
+            paint(">", TuiStyle::Success, color)
+        ),
     }
 }
 
@@ -1069,15 +1131,21 @@ fn format_menu(
     items: impl IntoIterator<Item = &'static str>,
     selected: usize,
     suffixes: Option<Vec<String>>,
+    color: bool,
 ) -> String {
     let mut output = String::new();
-    writeln!(&mut output, "{title}").expect("writing to a string cannot fail");
+    writeln!(&mut output, "{}", section_title(title, color))
+        .expect("writing to a string cannot fail");
     for (index, item) in items.into_iter().enumerate() {
-        let marker = if index == selected { ">" } else { " " };
+        let marker = if index == selected {
+            paint(">", TuiStyle::Success, color)
+        } else {
+            " ".to_string()
+        };
         let suffix = suffixes
             .as_ref()
             .and_then(|values| values.get(index))
-            .map(|value| format!(" {value}"))
+            .map(|value| format!(" {}", paint(value, TuiStyle::Muted, color)))
             .unwrap_or_default();
         writeln!(&mut output, "{marker} {item}{suffix}").expect("writing to a string cannot fail");
     }
@@ -1085,7 +1153,7 @@ fn format_menu(
     output
 }
 
-fn format_sort_menu(selected: usize, current_sort: SortBy) -> String {
+fn format_sort_menu(selected: usize, current_sort: SortBy, color: bool) -> String {
     let suffixes = view::SORT_OPTIONS
         .iter()
         .map(|sort_by| {
@@ -1103,10 +1171,11 @@ fn format_sort_menu(selected: usize, current_sort: SortBy) -> String {
             .map(|sort_by| view::sort_label(*sort_by)),
         selected,
         Some(suffixes),
+        color,
     )
 }
 
-fn format_group_menu(selected: usize, current_group: GroupBy) -> String {
+fn format_group_menu(selected: usize, current_group: GroupBy, color: bool) -> String {
     let suffixes = GROUP_OPTIONS
         .iter()
         .map(|group_by| {
@@ -1122,10 +1191,11 @@ fn format_group_menu(selected: usize, current_group: GroupBy) -> String {
         GROUP_OPTIONS.iter().map(|group_by| group_label(*group_by)),
         selected,
         Some(suffixes),
+        color,
     )
 }
 
-fn format_filter_menu(selected: usize, app: &TuiApp) -> String {
+fn format_filter_menu(selected: usize, app: &TuiApp, color: bool) -> String {
     let suffixes = vec![
         if app.search_query.is_empty() {
             "none".to_string()
@@ -1140,10 +1210,10 @@ fn format_filter_menu(selected: usize, app: &TuiApp) -> String {
         threshold_bytes_label(app.filter.min_io_delta_bytes, app.raw_bytes),
         String::new(),
     ];
-    format_menu("Filters", FILTER_ITEMS, selected, Some(suffixes))
+    format_menu("Filters", FILTER_ITEMS, selected, Some(suffixes), color)
 }
 
-fn format_view_menu(selected: usize, app: &TuiApp) -> String {
+fn format_view_menu(selected: usize, app: &TuiApp, color: bool) -> String {
     let suffixes = vec![
         on_off(app.normalize_cpu).to_string(),
         on_off(app.raw_bytes).to_string(),
@@ -1159,10 +1229,10 @@ fn format_view_menu(selected: usize, app: &TuiApp) -> String {
         on_off(app.columns.totals).to_string(),
         on_off(app.columns.top_process).to_string(),
     ];
-    format_menu("View", VIEW_ITEMS, selected, Some(suffixes))
+    format_menu("View", VIEW_ITEMS, selected, Some(suffixes), color)
 }
 
-fn format_sampling_menu(selected: usize, app: &TuiApp) -> String {
+fn format_sampling_menu(selected: usize, app: &TuiApp, color: bool) -> String {
     let suffixes = vec![
         limit_label(app.limit),
         limit_label(app.limit),
@@ -1170,10 +1240,10 @@ fn format_sampling_menu(selected: usize, app: &TuiApp) -> String {
         humantime::format_duration(app.interval).to_string(),
         if app.paused { "paused" } else { "live" }.to_string(),
     ];
-    format_menu("Sampling", SAMPLING_ITEMS, selected, Some(suffixes))
+    format_menu("Sampling", SAMPLING_ITEMS, selected, Some(suffixes), color)
 }
 
-fn format_recording_menu(selected: usize, app: &TuiApp) -> String {
+fn format_recording_menu(selected: usize, app: &TuiApp, color: bool) -> String {
     let active = app.recording.is_some();
     let suffixes = vec![
         humantime::format_duration(app.record_duration).to_string(),
@@ -1192,10 +1262,16 @@ fn format_recording_menu(selected: usize, app: &TuiApp) -> String {
             "none".to_string()
         },
     ];
-    format_menu("Recording", RECORDING_ITEMS, selected, Some(suffixes))
+    format_menu(
+        "Recording",
+        RECORDING_ITEMS,
+        selected,
+        Some(suffixes),
+        color,
+    )
 }
 
-fn format_export_menu(selected: usize, app: &TuiApp) -> String {
+fn format_export_menu(selected: usize, app: &TuiApp, color: bool) -> String {
     let suffixes = vec![
         "ready".to_string(),
         "ready".to_string(),
@@ -1210,50 +1286,59 @@ fn format_export_menu(selected: usize, app: &TuiApp) -> String {
             "none".to_string()
         },
     ];
-    format_menu("Export", EXPORT_ITEMS, selected, Some(suffixes))
+    format_menu("Export", EXPORT_ITEMS, selected, Some(suffixes), color)
 }
 
-fn format_export_path(target: ExportTarget, format: ExportFormat, input: &str) -> String {
+fn format_export_path(
+    target: ExportTarget,
+    format: ExportFormat,
+    input: &str,
+    color: bool,
+) -> String {
     format!(
-        "Export {} {}\n> {input}\n\nEnter export | Backspace edit | Esc cancel\n\n",
+        "{} {} {}\n{} {input}\n\nEnter export | Backspace edit | Esc cancel\n\n",
+        section_title("Export", color),
         export_target_label(target),
-        export_format_label(format)
+        export_format_label(format),
+        paint(">", TuiStyle::Success, color)
     )
 }
 
-fn format_help() -> String {
-    [
-        "Help",
-        "o options menu",
-        "s sort menu | g group menu | f filters | v view | r recording | e export",
-        "/ search | up/down select row | PgUp/PgDn page | Enter details",
-        "space pause/resume | +/- row limit | [/] refresh interval",
-        "n normalized CPU | b raw bytes | c command display",
-        "Esc close overlay or quit main view | q quit",
-        "",
-    ]
-    .join("\n")
+fn format_help(color: bool) -> String {
+    let lines = [
+        section_title("Help", color),
+        "o options menu".to_string(),
+        "s sort menu | g group menu | f filters | v view | r recording | e export".to_string(),
+        "/ search | up/down select row | PgUp/PgDn page | Enter details".to_string(),
+        "space pause/resume | +/- row limit | [/] refresh interval".to_string(),
+        "n normalized CPU | b raw bytes | c command display".to_string(),
+        "Esc close overlay or quit main view | q quit".to_string(),
+        String::new(),
+    ];
+    lines.join("\n")
 }
 
-fn format_detail(app: &TuiApp) -> String {
-    let Some(report) = &app.last_report else {
-        return "Details\nno snapshot yet\n\n".to_string();
-    };
-    let Some(row) = report.rows.get(app.selected_row) else {
-        return "Details\nno selected row\n\n".to_string();
-    };
-
+fn format_detail(app: &TuiApp, row: &SnapshotRow, color: bool) -> String {
     let mut output = String::new();
-    writeln!(&mut output, "Details").expect("writing to a string cannot fail");
-    writeln!(&mut output, "name: {}", row.display_name).expect("writing to a string cannot fail");
-    if let Some(pid) = row.pid {
-        writeln!(&mut output, "pid: {pid}").expect("writing to a string cannot fail");
-    }
-    writeln!(&mut output, "group: {}", group_label(row.group_type))
+    writeln!(&mut output, "{}", section_title("Details", color))
         .expect("writing to a string cannot fail");
+    writeln!(&mut output, "{} {}", label("name", color), row.display_name)
+        .expect("writing to a string cannot fail");
+    if let Some(pid) = row.pid {
+        writeln!(&mut output, "{} {pid}", label("pid", color))
+            .expect("writing to a string cannot fail");
+    }
     writeln!(
         &mut output,
-        "user: {}",
+        "{} {}",
+        label("group", color),
+        group_label(row.group_type)
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} {}",
+        label("user", color),
         row.user_name
             .as_deref()
             .or(row.users.as_deref())
@@ -1262,26 +1347,51 @@ fn format_detail(app: &TuiApp) -> String {
     .expect("writing to a string cannot fail");
     writeln!(
         &mut output,
-        "cpu: {:.1}% | ram: {} | read: {} | write: {} | io: {}",
+        "{} {:.1}% | {} {} | {} {} | {} {} | {} {}",
+        label("cpu", color),
         row.cpu_percent,
+        label("ram", color),
         format_bytes(row.ram_bytes, app.raw_bytes),
+        label("read", color),
         format_bps(row.read_bps, app.raw_bytes),
+        label("write", color),
         format_bps(row.write_bps, app.raw_bytes),
+        label("io", color),
         format_bps(row.io_bps, app.raw_bytes)
     )
     .expect("writing to a string cannot fail");
     if let Some(process) = &row.top_process {
-        writeln!(&mut output, "top process: {process}").expect("writing to a string cannot fail");
+        writeln!(&mut output, "{} {process}", label("top process", color))
+            .expect("writing to a string cannot fail");
     }
-    output.push_str("\nEsc close | q quit\n\n");
+    writeln!(
+        &mut output,
+        "\n{}\n",
+        paint("Esc close | q quit", TuiStyle::Muted, color)
+    )
+    .expect("writing to a string cannot fail");
     output
 }
 
-fn format_footer(app: &TuiApp) -> String {
+fn format_footer(app: &TuiApp, color: bool) -> String {
     if app.overlay_open() {
-        "\nup/down choose | Enter apply | Esc back | q quit\n".to_string()
+        format!(
+            "\n{}\n",
+            paint(
+                "up/down choose | Enter apply | Esc back | q quit",
+                TuiStyle::Muted,
+                color
+            )
+        )
     } else {
-        "\no options | ? help | / search | Enter details | s sort | r record | q quit\n".to_string()
+        format!(
+            "\n{}\n",
+            paint(
+                "o options | ? help | / search | Enter details | s sort | r record | q quit",
+                TuiStyle::Muted,
+                color
+            )
+        )
     }
 }
 
@@ -1331,7 +1441,7 @@ fn table_max_rows(app: &TuiApp, overlay: &str, footer: &str, viewport: Viewport)
     let state = app
         .last_report
         .as_ref()
-        .map(|report| format_state_line(app, report))
+        .map(|report| format_state_line(app, report, false))
         .unwrap_or_default();
     let reserved_lines =
         line_count(&header) + line_count(&state) + line_count(overlay) + line_count(footer) + 2;
@@ -1439,6 +1549,49 @@ fn limit_label(limit: usize) -> String {
 
 fn on_off(value: bool) -> &'static str {
     if value { "on" } else { "off" }
+}
+
+fn paint(value: &str, style: TuiStyle, enabled: bool) -> String {
+    if !enabled || value.is_empty() {
+        return value.to_string();
+    }
+    format!("{}{}{}", ansi_code(style), value, "\x1b[0m")
+}
+
+fn ansi_code(style: TuiStyle) -> &'static str {
+    match style {
+        TuiStyle::Header => "\x1b[1;36m",
+        TuiStyle::Section => "\x1b[1;34m",
+        TuiStyle::Label => "\x1b[36m",
+        TuiStyle::Success => "\x1b[32m",
+        TuiStyle::Warning => "\x1b[33m",
+        TuiStyle::Error => "\x1b[31m",
+        TuiStyle::Accent => "\x1b[35m",
+        TuiStyle::Muted => "\x1b[2m",
+    }
+}
+
+fn label(value: &str, color: bool) -> String {
+    paint(value, TuiStyle::Label, color)
+}
+
+fn section_title(value: &str, color: bool) -> String {
+    paint(value, TuiStyle::Section, color)
+}
+
+fn status_message_style(message: &str) -> TuiStyle {
+    let message = message.to_ascii_lowercase();
+    if message.contains("failed")
+        || message.contains("no ")
+        || message.contains("exists")
+        || message.contains("must ")
+    {
+        TuiStyle::Error
+    } else if message.contains("paused") || message.contains("updated") {
+        TuiStyle::Warning
+    } else {
+        TuiStyle::Success
+    }
 }
 
 fn threshold_percent_label(value: Option<f32>) -> String {
@@ -1733,5 +1886,83 @@ mod tests {
         );
         assert!(!columns.user);
         assert!(!columns.rates);
+    }
+
+    #[test]
+    fn detail_overlay_keeps_entered_row_snapshot() {
+        let mut app = app();
+        app.last_report = Some(report_with_processes(&["alpha", "beta"]));
+        app.selected_row = 1;
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
+        app.last_report = Some(report_with_processes(&["gamma", "delta"]));
+
+        let detail = format_overlay(&app, false);
+        assert!(detail.contains("beta"));
+        assert!(!detail.contains("delta"));
+    }
+
+    #[test]
+    fn render_app_uses_ansi_colors_when_enabled() {
+        let mut app = app();
+        let report = report_with_processes(&["alpha"]);
+        app.last_report = Some(report.clone());
+
+        let colored = render_app(&app, &report, true, DEFAULT_VIEWPORT);
+        let plain = render_app(&app, &report, false, DEFAULT_VIEWPORT);
+
+        assert!(colored.contains("\x1b["));
+        assert!(!plain.contains("\x1b["));
+    }
+
+    fn report_with_processes(names: &[&str]) -> SnapshotReport {
+        let sample = SystemSample {
+            timestamp: std::time::SystemTime::UNIX_EPOCH,
+            total_memory_bytes: 1024,
+            available_memory_bytes: 512,
+            global_cpu_percent: 0.0,
+            processes: names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| RawProcessSample {
+                    timestamp: std::time::SystemTime::UNIX_EPOCH,
+                    identity: rescope_core::ProcessIdentity {
+                        pid: index as u32 + 1,
+                        start_time_epoch_s: 1,
+                        name: (*name).to_string(),
+                    },
+                    user_id: Some("1000".to_string()),
+                    user_name: Some("alice".to_string()),
+                    parent_pid: Some(1),
+                    executable: Some(format!("/usr/bin/{name}")),
+                    command: Some(format!("/usr/bin/{name}")),
+                    memory_bytes: 64,
+                    virtual_memory_bytes: 64,
+                    cpu_percent: index as f32,
+                    disk_total_read_bytes: 0,
+                    disk_total_write_bytes: 0,
+                    disk_read_delta_bytes: 0,
+                    disk_write_delta_bytes: 0,
+                })
+                .collect(),
+            sample_interval: Duration::from_secs(1),
+            logical_cpu_count: 1,
+        };
+
+        build_snapshot_report(
+            &sample,
+            SnapshotReportOptions {
+                interval: Duration::from_secs(1),
+                group_by: GroupBy::Process,
+                sort_by: SortBy::Name,
+                filters: FilterSpec::default(),
+                show_command: false,
+                limit: 20,
+                normalize_cpu: false,
+            },
+        )
     }
 }

@@ -112,11 +112,11 @@ pub fn render_snapshot_with_options(
     let row_range = visible_row_range(report.rows.len(), options.row_offset, options.max_rows);
     match report.group_by {
         GroupBy::Process => {
-            table.set_header(snapshot_process_header(&options));
+            table.set_header(snapshot_process_header(&options, color));
             for (index, row) in report.rows[row_range.clone()].iter().enumerate() {
                 let absolute_index = row_range.start + index;
                 let mut cells = Vec::new();
-                push_selection_cell(&mut cells, selected_row, absolute_index);
+                push_selection_cell(&mut cells, selected_row, absolute_index, color);
                 if options.columns.pid {
                     cells.push(cell(row.pid.map(|pid| pid.to_string()).unwrap_or_default()));
                 }
@@ -132,11 +132,11 @@ pub fn render_snapshot_with_options(
             }
         }
         GroupBy::Name | GroupBy::Command | GroupBy::Executable | GroupBy::Parent => {
-            table.set_header(snapshot_group_header(report.group_by, &options));
+            table.set_header(snapshot_group_header(report.group_by, &options, color));
             for (index, row) in report.rows[row_range.clone()].iter().enumerate() {
                 let absolute_index = row_range.start + index;
                 let mut cells = Vec::new();
-                push_selection_cell(&mut cells, selected_row, absolute_index);
+                push_selection_cell(&mut cells, selected_row, absolute_index, color);
                 cells.push(group_cell(&row.display_name, report.group_by));
                 if options.columns.process_count {
                     cells.push(cell(row.process_count.to_string()));
@@ -158,11 +158,11 @@ pub fn render_snapshot_with_options(
             }
         }
         GroupBy::User => {
-            table.set_header(snapshot_user_header(&options));
+            table.set_header(snapshot_user_header(&options, color));
             for (index, row) in report.rows[row_range.clone()].iter().enumerate() {
                 let absolute_index = row_range.start + index;
                 let mut cells = Vec::new();
-                push_selection_cell(&mut cells, selected_row, absolute_index);
+                push_selection_cell(&mut cells, selected_row, absolute_index, color);
                 cells.push(truncated_cell(&row.display_name, USER_DISPLAY_MAX_CHARS));
                 if options.columns.process_count {
                     cells.push(cell(row.process_count.to_string()));
@@ -355,77 +355,90 @@ fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool)
     println!("{table}");
 }
 
-fn snapshot_process_header(options: &SnapshotRenderOptions) -> Vec<Cell> {
+fn snapshot_process_header(options: &SnapshotRenderOptions, color: bool) -> Vec<Cell> {
     let mut header = Vec::new();
-    push_selection_header(&mut header, options.selected_row);
+    push_selection_header(&mut header, options.selected_row, color);
     if options.columns.pid {
-        header.push(cell("PID"));
+        header.push(header_cell("PID", color));
     }
     if options.columns.user {
-        header.push(cell("USER"));
+        header.push(header_cell("USER", color));
     }
-    header.push(cell("PROCESS"));
-    push_metric_header(&mut header, options.columns);
+    header.push(header_cell("PROCESS", color));
+    push_metric_header(&mut header, options.columns, color);
     header
 }
 
-fn snapshot_group_header(group_by: GroupBy, options: &SnapshotRenderOptions) -> Vec<Cell> {
+fn snapshot_group_header(
+    group_by: GroupBy,
+    options: &SnapshotRenderOptions,
+    color: bool,
+) -> Vec<Cell> {
     let mut header = Vec::new();
-    push_selection_header(&mut header, options.selected_row);
-    header.push(cell(group_label(group_by)));
+    push_selection_header(&mut header, options.selected_row, color);
+    header.push(header_cell(group_label(group_by), color));
     if options.columns.process_count {
-        header.push(cell("PROCS"));
+        header.push(header_cell("PROCS", color));
     }
     if options.columns.users {
-        header.push(cell("USERS"));
+        header.push(header_cell("USERS", color));
     }
-    push_metric_header(&mut header, options.columns);
+    push_metric_header(&mut header, options.columns, color);
     if options.columns.top_process {
-        header.push(cell("TOP"));
+        header.push(header_cell("TOP", color));
     }
     header
 }
 
-fn snapshot_user_header(options: &SnapshotRenderOptions) -> Vec<Cell> {
+fn snapshot_user_header(options: &SnapshotRenderOptions, color: bool) -> Vec<Cell> {
     let mut header = Vec::new();
-    push_selection_header(&mut header, options.selected_row);
-    header.push(cell("USER"));
+    push_selection_header(&mut header, options.selected_row, color);
+    header.push(header_cell("USER", color));
     if options.columns.process_count {
-        header.push(cell("PROCS"));
+        header.push(header_cell("PROCS", color));
     }
-    push_metric_header(&mut header, options.columns);
+    push_metric_header(&mut header, options.columns, color);
     if options.columns.top_process {
-        header.push(cell("TOP"));
+        header.push(header_cell("TOP", color));
     }
     header
 }
 
-fn push_selection_header(header: &mut Vec<Cell>, selected_row: Option<usize>) {
+fn push_selection_header(header: &mut Vec<Cell>, selected_row: Option<usize>, color: bool) {
     if selected_row.is_some() {
-        header.push(cell(""));
+        header.push(header_cell("", color));
     }
 }
 
-fn push_selection_cell(cells: &mut Vec<Cell>, selected_row: Option<usize>, row_index: usize) {
+fn push_selection_cell(
+    cells: &mut Vec<Cell>,
+    selected_row: Option<usize>,
+    row_index: usize,
+    color: bool,
+) {
     if let Some(selected_row) = selected_row {
-        cells.push(cell(if selected_row == row_index { ">" } else { "" }));
+        let mut marker = cell(if selected_row == row_index { ">" } else { "" });
+        if color && selected_row == row_index {
+            marker = marker.fg(Color::Green);
+        }
+        cells.push(marker);
     }
 }
 
-fn push_metric_header(header: &mut Vec<Cell>, columns: SnapshotColumns) {
+fn push_metric_header(header: &mut Vec<Cell>, columns: SnapshotColumns, color: bool) {
     if columns.cpu {
-        header.push(cell("CPU%"));
+        header.push(header_cell("CPU%", color));
     }
     if columns.ram {
-        header.push(cell("RAM"));
+        header.push(header_cell("RAM", color));
     }
     if columns.rates {
-        header.push(cell("READ/s"));
-        header.push(cell("WRITE/s"));
+        header.push(header_cell("READ/s", color));
+        header.push(header_cell("WRITE/s", color));
     }
     if columns.totals {
-        header.push(cell("READ"));
-        header.push(cell("WRITE"));
+        header.push(header_cell("READ", color));
+        header.push(header_cell("WRITE", color));
     }
 }
 
@@ -553,6 +566,11 @@ fn plain_table() -> Table {
 
 fn cell(value: impl Into<String>) -> Cell {
     Cell::new(value.into())
+}
+
+fn header_cell(value: impl Into<String>, color: bool) -> Cell {
+    let cell = cell(value);
+    if color { cell.fg(Color::Cyan) } else { cell }
 }
 
 fn truncated_cell(value: &str, max_chars: usize) -> Cell {
