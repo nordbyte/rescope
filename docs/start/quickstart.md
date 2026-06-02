@@ -26,7 +26,7 @@ Interactive terminal mode:
 rescope live --tui --group command --sort cpu
 ```
 
-Press `q`, `Esc` or `Ctrl-C` to exit.
+Press `o` for options, `?` for help, `/` for search, `Enter` for row details and `q`, `Esc` or `Ctrl-C` to exit.
 
 ## Record a window
 

@@ -18,7 +18,24 @@ rescope live --tui --group user --sort cpu
 
 Interactive mode uses an alternate screen and exits with `q`, `Esc` or `Ctrl-C`.
 
-While the TUI is running, press `s` to open the sort menu. Use up/down to choose CPU, RAM, combined I/O, reads, writes, PID, name or user sorting, then press Enter to apply it. Press `Esc` to close the menu without changing the current sort.
+The interactive TUI is menu-driven:
+
+- `o` opens the central options menu for sorting, grouping, filters, view settings, sampling, export, details and help.
+- `?` opens the help overlay.
+- `s` opens sorting directly.
+- `g` opens grouping directly.
+- `f` opens filters directly.
+- `v` opens view settings directly.
+- `e` opens snapshot export directly.
+- `/` edits the live search query.
+- Up/down selects table rows or moves within menus.
+- `Enter` opens details for the selected row or applies the selected menu item.
+- `Space` pauses or resumes sampling.
+- `+` and `-` adjust the visible row limit.
+- `[` and `]` adjust the refresh interval.
+- `n`, `b` and `c` toggle normalized CPU, raw bytes and command display.
+
+Menus use up/down plus Enter. Press `Esc` to close an overlay; from the main view it exits the TUI.
 
 ## One-shot live
 

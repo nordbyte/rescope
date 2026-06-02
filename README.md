@@ -60,7 +60,7 @@ rescope record --duration 30s --name node --json report.json --csv report.csv
 ```
 
 Running `rescope` without a subcommand is equivalent to `rescope live`.
-In TUI mode, press `s` to open the sort menu, use up/down to choose a metric and press Enter to apply it.
+In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details and `e` for snapshot export. Menus use up/down plus Enter, so grouping, sorting, filters, view options and sampling can be changed without remembering CLI flags.
 
 ## Privacy
 
