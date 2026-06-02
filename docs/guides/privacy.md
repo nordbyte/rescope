@@ -12,6 +12,8 @@ Use `--show-command` when full commands are needed:
 rescope snapshot --show-command --pid 1234
 ```
 
-`--cmd` filters command lines internally without automatically printing them.
+`--cmd` and `--cmd-regex` filter command lines internally without automatically printing them.
 
 `--group command` displays command lines because command aggregation is the explicit purpose of that mode.
+
+The interactive TUI collects command-line or executable details only when a current view, filter, search or recording needs them.

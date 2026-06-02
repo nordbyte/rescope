@@ -9,6 +9,8 @@ rescope record --duration 30s --json report.json --csv report.csv
 rescope live --once --json -
 ```
 
+In `rescope live --tui`, press `e` for snapshot exports or `r` for recording exports. The TUI opens a path prompt before writing and refuses to overwrite an existing file.
+
 ## Atomic file writes
 
 File exports are written through a temporary file in the destination directory and then renamed into place.

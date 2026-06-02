@@ -6,6 +6,8 @@ use crate::metrics::{
 };
 use crate::sort::{sort_recording_rows_limit, sort_snapshot_rows_limit};
 
+const MAX_TIMELINE_POINTS: usize = 2048;
+
 #[derive(Debug, Clone, Copy)]
 pub struct RecordingAggregateOptions {
     pub group_by: GroupBy,
@@ -423,14 +425,22 @@ impl RecordingAcc {
         self.disk_read_total_bytes += sample.read_delta_bytes;
         self.disk_write_total_bytes += sample.write_delta_bytes;
         self.last_seen = sample.timestamp;
-        self.ram_timeline
-            .push((sample.timestamp, sample.memory_bytes));
-        self.cpu_timeline
-            .push((sample.timestamp, sample.cpu_percent));
-        self.read_timeline
-            .push((sample.timestamp, sample.read_delta_bytes));
-        self.write_timeline
-            .push((sample.timestamp, sample.write_delta_bytes));
+        push_bounded_timeline(
+            &mut self.ram_timeline,
+            (sample.timestamp, sample.memory_bytes),
+        );
+        push_bounded_timeline(
+            &mut self.cpu_timeline,
+            (sample.timestamp, sample.cpu_percent),
+        );
+        push_bounded_timeline(
+            &mut self.read_timeline,
+            (sample.timestamp, sample.read_delta_bytes),
+        );
+        push_bounded_timeline(
+            &mut self.write_timeline,
+            (sample.timestamp, sample.write_delta_bytes),
+        );
 
         if let Some((name, contribution)) = &sample.top_process
             && self
@@ -493,6 +503,19 @@ impl RecordingAcc {
             write_timeline: self.write_timeline,
         }
     }
+}
+
+fn push_bounded_timeline<T: Copy>(timeline: &mut Vec<(SystemTime, T)>, entry: (SystemTime, T)) {
+    if timeline.len() >= MAX_TIMELINE_POINTS {
+        let retained = timeline
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, value)| (index % 2 == 0).then_some(value))
+            .collect();
+        *timeline = retained;
+    }
+    timeline.push(entry);
 }
 
 fn lifecycle_status(
@@ -720,5 +743,34 @@ mod tests {
 
         assert_eq!(rows[0].lifecycle_status, "exited_during_recording");
         assert_eq!(rows[1].lifecycle_status, "started_during_recording");
+    }
+
+    #[test]
+    fn recording_timelines_are_bounded_for_long_runs() {
+        let samples = (0..3000)
+            .map(|index| {
+                system_at(
+                    SystemTime::UNIX_EPOCH + Duration::from_secs(index),
+                    vec![process(1, 1, "node", "alice", 1.0, 100 + index, (0, 0))],
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let rows = aggregate_recording(
+            &samples,
+            RecordingAggregateOptions {
+                group_by: GroupBy::Process,
+                sort_by: SortBy::Pid,
+                interval: Duration::from_secs(1),
+                measured_duration: Duration::from_secs(3000),
+                show_command: false,
+                limit: 10,
+                include_idle: true,
+            },
+        );
+
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].ram_timeline.len() <= MAX_TIMELINE_POINTS);
+        assert!(rows[0].cpu_timeline.len() <= MAX_TIMELINE_POINTS);
     }
 }

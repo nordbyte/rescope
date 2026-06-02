@@ -50,6 +50,12 @@ for (const option of [
   "--csv",
   "--group",
   "--cmd",
+  "--cmd-regex",
+  "--name-regex",
+  "--min-cpu",
+  "--min-ram",
+  "--min-io",
+  "--invert",
   "--show-command"
 ]) {
   const optionPattern = new RegExp(`\`${escapeRegExp(option)}(?:\`|\\s)`);

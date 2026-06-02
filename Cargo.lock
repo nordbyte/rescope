@@ -1368,10 +1368,12 @@ dependencies = [
  "humantime",
  "predicates",
  "ratatui",
+ "regex",
  "rescope-core",
  "serde",
  "serde_json",
  "tempfile",
+ "unicode-width",
 ]
 
 [[package]]
@@ -1379,6 +1381,7 @@ name = "rescope-core"
 version = "0.1.0"
 dependencies = [
  "humantime",
+ "regex",
  "serde",
  "sysinfo",
  "tempfile",

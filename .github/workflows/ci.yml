@@ -5,22 +5,61 @@ on:
     branches: ["main"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Rust
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: docs/package.json
+
       - name: Format
         run: cargo fmt --all -- --check
+
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
       - name: Test
         run: cargo test --workspace
-      - name: Docs check
-        run: npm run docs:check
+
+      - name: Docs verify
+        run: npm run docs:verify
+
       - name: Snapshot smoke
         run: cargo run -p rescope-cli -- snapshot --limit 5
+
       - name: Record smoke
         run: cargo run -p rescope-cli -- record --duration 3s --interval 1s --limit 5
+
+      - name: npm wrapper smoke
+        run: npm run npm:smoke
+
+      - name: TUI PTY smoke
+        shell: bash
+        run: |
+          set +e
+          script -qec "timeout 3s cargo run -p rescope-cli -- live --tui --interval 250ms --limit 5" /tmp/rescope-tui.log
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
+            cat /tmp/rescope-tui.log
+            exit "$status"
+          fi
+          grep -q "rescope live" /tmp/rescope-tui.log

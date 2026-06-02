@@ -15,7 +15,7 @@ pub trait SampleSource {
     fn sample(&mut self) -> Result<SystemSample, RescopeError>;
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SamplerConfig {
     pub include_command: bool,
     pub include_executable: bool,
@@ -34,8 +34,6 @@ pub struct SysinfoSampler {
 struct PreviousCounters {
     total_read_bytes: u64,
     total_write_bytes: u64,
-    #[allow(dead_code)]
-    timestamp: Instant,
 }
 
 impl SysinfoSampler {
@@ -107,7 +105,6 @@ impl SysinfoSampler {
                 PreviousCounters {
                     total_read_bytes: disk.total_read_bytes,
                     total_write_bytes: disk.total_written_bytes,
-                    timestamp: Instant::now(),
                 },
             );
             seen.insert(identity.clone());

@@ -18,7 +18,7 @@ rescope live --once --json -
 ## Modes
 
 - Plain mode clears and redraws the terminal.
-- TUI mode uses an alternate screen with a central `o` options menu, direct menus for sorting/grouping/filtering/view/export, row details, live search, pause/resume, row-limit and interval controls.
+- TUI mode uses an alternate screen with a central `o` options menu, direct menus for sorting/grouping/filtering/view/recording/export, row details, live search, pause/resume, row-limit, interval and column controls.
 - `--once` renders one sample and exits.
 
 Exports are supported only with `--once`.

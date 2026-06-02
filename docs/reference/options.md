@@ -15,9 +15,18 @@
 - `--pid <PID>`
 - `--user <USER>`
 - `--name <NAME>`
+- `--name-regex <REGEX>`
 - `--cmd <SUBSTRING>`
+- `--cmd-regex <REGEX>`
+- `--min-cpu <PERCENT>`
+- `--min-ram <SIZE>`
+- `--min-io <SIZE>`
+- `--invert`
 - `--hide-self`
 - `--show-command`
+
+Size filters accept raw bytes or binary suffixes such as `512MiB`, `1GiB`, `64KiB` and `10M`.
+Regex filters are case-insensitive and are validated before sampling starts.
 
 ## Grouping
 

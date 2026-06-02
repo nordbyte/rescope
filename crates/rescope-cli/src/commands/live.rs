@@ -22,7 +22,7 @@ pub fn run(cli: &Cli, args: &LiveArgs) -> Result<()> {
         return tui::run_live(cli, args);
     }
     if args.tui && !tui::is_available() && !cli.quiet {
-        eprintln!("interactive TUI mode is planned; using plain terminal refresh for now");
+        eprintln!("interactive TUI is unavailable; using plain terminal refresh");
     }
 
     let filter = args.filters.to_filter_spec();

@@ -11,16 +11,24 @@ pub fn sort_recording_rows(rows: &mut [AggregateRow], sort_by: SortBy) {
 }
 
 pub fn sort_snapshot_rows_limit(rows: &mut Vec<SnapshotRow>, sort_by: SortBy, limit: usize) {
+    if limit == 0 {
+        rows.clear();
+        return;
+    }
     if limit < rows.len() {
-        rows.select_nth_unstable_by(limit, |left, right| snapshot_cmp(left, right, sort_by));
+        rows.select_nth_unstable_by(limit - 1, |left, right| snapshot_cmp(left, right, sort_by));
         rows.truncate(limit);
     }
     sort_snapshot_rows(rows, sort_by);
 }
 
 pub fn sort_recording_rows_limit(rows: &mut Vec<AggregateRow>, sort_by: SortBy, limit: usize) {
+    if limit == 0 {
+        rows.clear();
+        return;
+    }
     if limit < rows.len() {
-        rows.select_nth_unstable_by(limit, |left, right| recording_cmp(left, right, sort_by));
+        rows.select_nth_unstable_by(limit - 1, |left, right| recording_cmp(left, right, sort_by));
         rows.truncate(limit);
     }
     sort_recording_rows(rows, sort_by);
@@ -44,17 +52,9 @@ fn snapshot_cmp(left: &SnapshotRow, right: &SnapshotRow, sort_by: SortBy) -> Ord
             .to_ascii_lowercase()
             .cmp(&right.display_name.to_ascii_lowercase()),
         SortBy::User => left
-            .user_name
-            .as_deref()
-            .unwrap_or_default()
+            .user_label()
             .to_ascii_lowercase()
-            .cmp(
-                &right
-                    .user_name
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase(),
-            ),
+            .cmp(&right.user_label().to_ascii_lowercase()),
     }
     .then_with(|| left.display_name.cmp(&right.display_name))
 }
@@ -77,23 +77,37 @@ fn recording_cmp(left: &AggregateRow, right: &AggregateRow, sort_by: SortBy) -> 
             .to_ascii_lowercase()
             .cmp(&right.display_name.to_ascii_lowercase()),
         SortBy::User => left
-            .user_name
-            .as_deref()
-            .unwrap_or_default()
+            .user_label()
             .to_ascii_lowercase()
-            .cmp(
-                &right
-                    .user_name
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase(),
-            ),
+            .cmp(&right.user_label().to_ascii_lowercase()),
     }
     .then_with(|| left.display_name.cmp(&right.display_name))
 }
 
 fn desc_f32(left: f32, right: f32) -> Ordering {
     right.partial_cmp(&left).unwrap_or(Ordering::Equal)
+}
+
+trait SortUserLabel {
+    fn user_label(&self) -> &str;
+}
+
+impl SortUserLabel for SnapshotRow {
+    fn user_label(&self) -> &str {
+        self.user_name
+            .as_deref()
+            .or(self.users.as_deref())
+            .unwrap_or(&self.display_name)
+    }
+}
+
+impl SortUserLabel for AggregateRow {
+    fn user_label(&self) -> &str {
+        self.user_name
+            .as_deref()
+            .or(self.users.as_deref())
+            .unwrap_or(&self.display_name)
+    }
 }
 
 #[cfg(test)]
@@ -139,5 +153,26 @@ mod tests {
         let mut rows = vec![row("low", 10.0, 100), row("high", 1.0, 1_000)];
         sort_snapshot_rows(&mut rows, SortBy::Ram);
         assert_eq!(rows[0].display_name, "high");
+    }
+
+    #[test]
+    fn limits_snapshot_rows_to_top_k_without_off_by_one() {
+        let mut rows = vec![
+            row("one", 1.0, 1),
+            row("two", 2.0, 2),
+            row("three", 3.0, 3),
+            row("four", 4.0, 4),
+        ];
+        sort_snapshot_rows_limit(&mut rows, SortBy::Cpu, 2);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].display_name, "four");
+        assert_eq!(rows[1].display_name, "three");
+    }
+
+    #[test]
+    fn zero_limit_clears_rows_defensively() {
+        let mut rows = vec![row("one", 1.0, 1)];
+        sort_snapshot_rows_limit(&mut rows, SortBy::Cpu, 0);
+        assert!(rows.is_empty());
     }
 }

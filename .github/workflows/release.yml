@@ -6,6 +6,9 @@ on:
     tags:
       - "v*.*.*"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -30,10 +33,17 @@ jobs:
             target: x86_64-pc-windows-msvc
             archive: zip
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
-          targets: ${{ matrix.target }}
+          persist-credentials: false
+
+      - name: Setup Rust
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          rustup default stable
+
       - name: Build
         run: cargo build -p rescope-cli --release --target ${{ matrix.target }}
       - name: Package Unix
@@ -50,7 +60,26 @@ jobs:
           New-Item -ItemType Directory -Force dist/rescope-${{ matrix.target }}
           Copy-Item target/${{ matrix.target }}/release/rescope.exe dist/rescope-${{ matrix.target }}/
           Compress-Archive -Path dist/rescope-${{ matrix.target }} -DestinationPath dist/rescope-${{ matrix.target }}.zip
+
+      - name: Checksum Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd dist
+          sha256sum rescope-${{ matrix.target }}.${{ matrix.archive }} > rescope-${{ matrix.target }}.${{ matrix.archive }}.sha256
+
+      - name: Checksum Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-Location dist
+          $file = "rescope-${{ matrix.target }}.${{ matrix.archive }}"
+          $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+          "$hash  $file" | Out-File -Encoding ascii "$file.sha256"
+
       - uses: actions/upload-artifact@v5
         with:
           name: rescope-${{ matrix.target }}
-          path: dist/rescope-${{ matrix.target }}.${{ matrix.archive }}
+          path: |
+            dist/rescope-${{ matrix.target }}.${{ matrix.archive }}
+            dist/rescope-${{ matrix.target }}.${{ matrix.archive }}.sha256

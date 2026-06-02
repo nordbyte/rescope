@@ -141,6 +141,28 @@ fn snapshot_supports_new_groups_all_and_normalized_cpu() {
 }
 
 #[test]
+fn snapshot_accepts_regex_threshold_and_invert_filters() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "snapshot",
+            "--name-regex",
+            ".*",
+            "--min-cpu",
+            "0",
+            "--min-ram",
+            "0",
+            "--min-io",
+            "0",
+            "--invert",
+            "--limit",
+            "1",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
 fn live_once_can_export_json_to_stdout() {
     Command::cargo_bin("rescope")
         .unwrap()
@@ -168,6 +190,16 @@ fn invalid_interval_is_rejected() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("interval must be at least"));
+}
+
+#[test]
+fn invalid_regex_is_rejected() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args(["snapshot", "--name-regex", "["])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid regex"));
 }
 
 #[test]

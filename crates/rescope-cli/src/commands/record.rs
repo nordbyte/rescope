@@ -31,7 +31,8 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
         );
     }
 
-    let deadline = Instant::now() + args.duration;
+    let recording_started = Instant::now();
+    let deadline = recording_started + args.duration;
     let mut samples = Vec::new();
 
     while Instant::now() < deadline {
@@ -48,7 +49,7 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
     let report = build_recording_report(
         &samples,
         RecordingReportOptions {
-            requested_duration: args.duration,
+            requested_duration: recording_started.elapsed(),
             interval: args.interval,
             group_by: args.group.into(),
             sort_by: args.sort.into(),

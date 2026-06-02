@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 humantime.workspace = true
+regex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 sysinfo.workspace = true
 thiserror.workspace = true

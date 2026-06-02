@@ -26,13 +26,19 @@ pub enum SortBy {
     User,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FilterSpec {
     pub pids: Vec<u32>,
     pub users: Vec<String>,
     pub names: Vec<String>,
+    pub name_regexes: Vec<String>,
     pub command_substrings: Vec<String>,
+    pub command_regexes: Vec<String>,
+    pub min_cpu_percent: Option<f32>,
+    pub min_ram_bytes: Option<u64>,
+    pub min_io_delta_bytes: Option<u64>,
     pub hide_self: bool,
+    pub invert_match: bool,
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]

@@ -12,7 +12,8 @@ Use the README for the first install and quick start. Full documentation is avai
 - Resident memory per process and aggregate RAM start/end/min/max/average/delta during recordings.
 - Per-process read and write counters with safe deltas.
 - Live views in plain refresh mode or interactive terminal mode.
-- Time-bounded recording reports with lifecycle status and metric timelines.
+- Time-bounded recording reports from the CLI or directly from the interactive TUI.
+- TUI menus for sorting, grouping, filters, column visibility, sampling, recording and exports.
 - JSON and CSV exports to files or stdout.
 
 ## Install
@@ -53,6 +54,7 @@ npm install -g rescope
 rescope snapshot --limit 10
 rescope snapshot --group user --sort ram --limit 10
 rescope snapshot --group executable --sort io --all
+rescope snapshot --name-regex '^(node|bun)$' --min-ram 512MiB
 rescope live --tui --group command --sort cpu
 rescope live --once --json -
 rescope record --duration 1m --interval 1s --group user
@@ -60,7 +62,7 @@ rescope record --duration 30s --name node --json report.json --csv report.csv
 ```
 
 Running `rescope` without a subcommand is equivalent to `rescope live`.
-In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details and `e` for snapshot export. Menus use up/down plus Enter, so grouping, sorting, filters, view options and sampling can be changed without remembering CLI flags.
+In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details, `s` for sort, `v` for columns, `r` for recording and `e` for export. Menus use up/down plus Enter, so grouping, sorting, filters, view options, sampling and exports can be changed without remembering CLI flags.
 
 ## Privacy
 
@@ -96,7 +98,8 @@ Recording reports hide rows with no CPU, I/O or RAM movement by default. Use `--
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-npm run docs:check
+npm run docs:verify
+npm run npm:smoke
 ```
 
 Build the documentation:
