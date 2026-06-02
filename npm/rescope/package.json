@@ -1,0 +1,20 @@
+{
+  "name": "rescope",
+  "version": "0.1.0",
+  "description": "Inspect and record resource usage by process and user",
+  "license": "MIT",
+  "bin": {
+    "rescope": "bin/rescope.js"
+  },
+  "files": [
+    "bin",
+    "vendor",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=14.14"
+  },
+  "scripts": {
+    "smoke": "node bin/rescope.js --help"
+  }
+}

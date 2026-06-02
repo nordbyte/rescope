@@ -1,0 +1,5 @@
+/target/
+/npm/rescope/vendor/
+node_modules/
+*.log
+rescope_codex_prompt.md

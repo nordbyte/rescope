@@ -1,0 +1,44 @@
+[workspace]
+members = [
+    "crates/rescope-core",
+    "crates/rescope-cli",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["rescope contributors"]
+description = "Inspect and record resource usage by process and user"
+repository = "https://github.com/nordbyte/rescope"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+assert_cmd = "2.2.2"
+clap = "4.6.1"
+comfy-table = "7.2.2"
+csv = "1.4.0"
+crossterm = "0.29.0"
+humantime = "2.3.0"
+predicates = "3.1.4"
+ratatui = "0.30.0"
+rescope-core = { path = "crates/rescope-core" }
+serde = "1.0.228"
+serde_json = "1.0.145"
+sysinfo = "0.39.3"
+tempfile = "3.23.0"
+thiserror = "2.0.18"
+
+[workspace.metadata.dist]
+cargo-dist-version = "0.29.0"
+ci = "github"
+installers = ["shell", "powershell"]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+pr-run-mode = "plan"

@@ -1,0 +1,33 @@
+[package]
+name = "rescope-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "rescope"
+path = "src/main.rs"
+
+[features]
+default = []
+tui = ["dep:ratatui"]
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+comfy-table.workspace = true
+csv.workspace = true
+crossterm.workspace = true
+humantime.workspace = true
+ratatui = { workspace = true, optional = true }
+rescope-core.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
