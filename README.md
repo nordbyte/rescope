@@ -60,6 +60,7 @@ rescope record --duration 30s --name node --json report.json --csv report.csv
 ```
 
 Running `rescope` without a subcommand is equivalent to `rescope live`.
+In TUI mode, switch sorting while it runs with `c` CPU, `m` RAM, `i` I/O, `r` reads, `w` writes, `p` PID, `n` name or `u` user.
 
 ## Privacy
 

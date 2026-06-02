@@ -8,17 +8,36 @@ use crossterm::terminal::{
     Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
 use rescope_core::{
-    SampleSource, SamplerConfig, SnapshotReportOptions, SysinfoSampler, build_snapshot_report,
-    filter_sample,
+    SampleSource, SamplerConfig, SnapshotReportOptions, SortBy, SysinfoSampler,
+    build_snapshot_report, filter_sample,
 };
 
 use crate::args::{Cli, LiveArgs};
 use crate::output::table;
 use crate::tui::view;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TuiApp {
     tick_count: u64,
+    sort_by: SortBy,
+}
+
+impl TuiApp {
+    fn new(sort_by: SortBy) -> Self {
+        Self {
+            tick_count: 0,
+            sort_by,
+        }
+    }
+
+    fn set_sort(&mut self, sort_by: SortBy) -> bool {
+        if self.sort_by == sort_by {
+            false
+        } else {
+            self.sort_by = sort_by;
+            true
+        }
+    }
 }
 
 pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
@@ -29,9 +48,8 @@ pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
     sampler.warm_up(args.interval)?;
 
     let filter = args.filters.to_filter_spec();
-    let mut app = TuiApp::default();
+    let mut app = TuiApp::new(args.sort.into());
     let _guard = enter_terminal()?;
-    let mut next_tick = Instant::now();
 
     loop {
         let sample = sampler.sample()?;
@@ -41,7 +59,7 @@ pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
             SnapshotReportOptions {
                 interval: args.interval,
                 group_by: args.group.into(),
-                sort_by: args.sort.into(),
+                sort_by: app.sort_by,
                 filters: filter.clone(),
                 show_command: args.filters.show_command,
                 limit: args.effective_limit(),
@@ -60,12 +78,10 @@ pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
         view::render_footer();
         io::stdout().flush()?;
 
-        next_tick += args.interval;
-        if wait_for_exit_until(next_tick)? {
-            break;
-        }
-        if Instant::now() > next_tick + args.interval {
-            next_tick = Instant::now();
+        let next_tick = Instant::now() + args.interval;
+        match wait_for_input_until(next_tick, &mut app)? {
+            TuiInput::Quit => break,
+            TuiInput::Tick | TuiInput::RefreshNow => {}
         }
     }
 
@@ -79,11 +95,18 @@ fn enter_terminal() -> Result<TerminalGuard> {
     Ok(TerminalGuard)
 }
 
-fn wait_for_exit_until(deadline: Instant) -> Result<bool> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TuiInput {
+    Tick,
+    RefreshNow,
+    Quit,
+}
+
+fn wait_for_input_until(deadline: Instant, app: &mut TuiApp) -> Result<TuiInput> {
     loop {
         let now = Instant::now();
         if now >= deadline {
-            return Ok(false);
+            return Ok(TuiInput::Tick);
         }
         let timeout = (deadline - now).min(Duration::from_millis(100));
         if event::poll(timeout)?
@@ -97,9 +120,35 @@ fn wait_for_exit_until(deadline: Instant) -> Result<bool> {
             let ctrl_c =
                 key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
             if quit_key || ctrl_c {
-                return Ok(true);
+                return Ok(TuiInput::Quit);
+            }
+
+            let sort_modifier = key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT;
+            if sort_modifier
+                && let Some(sort_by) = sort_for_key(key.code)
+                && app.set_sort(sort_by)
+            {
+                return Ok(TuiInput::RefreshNow);
             }
         }
+    }
+}
+
+fn sort_for_key(code: KeyCode) -> Option<SortBy> {
+    let KeyCode::Char(ch) = code else {
+        return None;
+    };
+
+    match ch.to_ascii_lowercase() {
+        'c' => Some(SortBy::Cpu),
+        'm' => Some(SortBy::Ram),
+        'i' => Some(SortBy::Io),
+        'r' => Some(SortBy::Read),
+        'w' => Some(SortBy::Write),
+        'p' => Some(SortBy::Pid),
+        'n' => Some(SortBy::Name),
+        'u' => Some(SortBy::User),
+        _ => None,
     }
 }
 
@@ -109,5 +158,31 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_sort_hotkeys() {
+        assert_eq!(sort_for_key(KeyCode::Char('c')), Some(SortBy::Cpu));
+        assert_eq!(sort_for_key(KeyCode::Char('M')), Some(SortBy::Ram));
+        assert_eq!(sort_for_key(KeyCode::Char('i')), Some(SortBy::Io));
+        assert_eq!(sort_for_key(KeyCode::Char('r')), Some(SortBy::Read));
+        assert_eq!(sort_for_key(KeyCode::Char('w')), Some(SortBy::Write));
+        assert_eq!(sort_for_key(KeyCode::Char('p')), Some(SortBy::Pid));
+        assert_eq!(sort_for_key(KeyCode::Char('n')), Some(SortBy::Name));
+        assert_eq!(sort_for_key(KeyCode::Char('u')), Some(SortBy::User));
+        assert_eq!(sort_for_key(KeyCode::Char('x')), None);
+    }
+
+    #[test]
+    fn sort_state_only_changes_for_new_sort() {
+        let mut app = TuiApp::new(SortBy::Cpu);
+        assert!(!app.set_sort(SortBy::Cpu));
+        assert!(app.set_sort(SortBy::Ram));
+        assert_eq!(app.sort_by, SortBy::Ram);
     }
 }

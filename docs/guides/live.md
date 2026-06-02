@@ -18,6 +18,8 @@ rescope live --tui --group user --sort cpu
 
 Interactive mode uses an alternate screen and exits with `q`, `Esc` or `Ctrl-C`.
 
+While the TUI is running, press `c` for CPU, `m` for RAM, `i` for combined I/O, `r` for reads, `w` for writes, `p` for PID, `n` for name or `u` for user sorting.
+
 ## One-shot live
 
 `live --once` is equivalent to a live-rendered snapshot and can export:
