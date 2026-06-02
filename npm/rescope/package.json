@@ -15,6 +15,7 @@
     "node": ">=14.14"
   },
   "scripts": {
+    "test": "node test/wrapper.test.js",
     "smoke": "node bin/rescope.js --help"
   }
 }

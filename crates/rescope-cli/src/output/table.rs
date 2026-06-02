@@ -188,45 +188,66 @@ pub fn print_recording(
     timeline_limit: usize,
     color: bool,
 ) {
-    println!("rescope report");
-    println!(
+    print!(
+        "{}",
+        render_recording(report, raw_bytes, timeline_limit, color)
+    );
+}
+
+pub fn render_recording(
+    report: &RecordingReport,
+    raw_bytes: bool,
+    timeline_limit: usize,
+    color: bool,
+) -> String {
+    let mut output = String::new();
+    writeln!(&mut output, "rescope report").expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
         "started: {}",
         humantime::format_rfc3339_seconds(report.started_at)
-    );
-    println!(
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
         "ended:   {}",
         humantime::format_rfc3339_seconds(report.ended_at)
-    );
-    println!(
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
         "duration: {} | interval: {} | samples: {} | group: {:?} | sort: {:?}",
         humantime::format_duration(report.duration),
         humantime::format_duration(report.interval),
         report.sample_count,
         report.group_by,
         report.sort_by
-    );
-    println!("filters: {}", describe_filters(report));
-    println!();
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(&mut output, "filters: {}", describe_filters(report))
+        .expect("writing to a string cannot fail");
+    output.push('\n');
 
     if report.rows.is_empty() {
-        println!("no matching processes");
+        output.push_str("no matching processes\n");
     } else {
-        print_recording_table(report, raw_bytes, color);
+        output.push_str(&render_recording_table(report, raw_bytes, color));
         if timeline_limit > 0 {
-            print_ram_timeline(report, raw_bytes, timeline_limit);
+            output.push_str(&render_ram_timeline(report, raw_bytes, timeline_limit));
         }
     }
 
     if !report.notes.is_empty() {
-        println!();
-        println!("notes:");
+        output.push('\n');
+        output.push_str("notes:\n");
         for note in &report.notes {
-            println!("- {note}");
+            writeln!(&mut output, "- {note}").expect("writing to a string cannot fail");
         }
     }
+    output
 }
 
-fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool) {
+fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool) -> String {
     let mut table = plain_table();
     match report.group_by {
         GroupBy::Process => {
@@ -236,14 +257,20 @@ fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool)
                 "PROCESS",
                 "CPU avg",
                 "CPU max",
+                "CPU p95",
+                "CPU p99",
                 "CPU-s",
                 "RAM start",
                 "RAM end",
                 "RAM max",
+                "RAM p95",
                 "RAM Δ",
                 "READ",
                 "WRITE",
+                "I/O p95",
                 "AVG I/O",
+                "START",
+                "EXIT",
                 "first",
                 "last",
                 "STATUS",
@@ -258,14 +285,30 @@ fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool)
                     truncated_cell(&row.display_name, PROCESS_DISPLAY_MAX_CHARS),
                     cpu_avg(row, report, color),
                     cpu_max(row, report, color),
+                    cpu_percent_cell(
+                        row.cpu_p95_percent,
+                        report.logical_cpu_count,
+                        report.cpu_normalized,
+                        color,
+                    ),
+                    cpu_percent_cell(
+                        row.cpu_p99_percent,
+                        report.logical_cpu_count,
+                        report.cpu_normalized,
+                        color,
+                    ),
                     cell(format!("{:.1}", row.cpu_core_seconds)),
                     cell(format_bytes(row.ram_start_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_end_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_max_bytes, raw_bytes)),
+                    cell(format_bytes(row.ram_p95_bytes, raw_bytes)),
                     signed_bytes_cell(row.ram_delta_bytes, raw_bytes, color),
                     cell(format_bytes(row.disk_read_total_bytes, raw_bytes)),
                     cell(format_bytes(row.disk_write_total_bytes, raw_bytes)),
+                    cell(format_bytes(row.io_p95_bytes, raw_bytes)),
                     cell(format_bps(row.io_bytes_per_second_avg, raw_bytes)),
+                    cell(row.started_count.to_string()),
+                    cell(row.exited_count.to_string()),
                     cell(humantime::format_rfc3339_seconds(row.first_seen).to_string()),
                     cell(humantime::format_rfc3339_seconds(row.last_seen).to_string()),
                     lifecycle_cell(&row.lifecycle_status),
@@ -279,14 +322,19 @@ fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool)
                 "USERS",
                 "CPU avg",
                 "CPU max",
+                "CPU p95",
                 "CPU-s",
+                "RAM p95",
                 "RAM start",
                 "RAM end",
                 "RAM max",
                 "RAM Δ",
                 "READ",
                 "WRITE",
+                "I/O p95",
                 "AVG I/O",
+                "START",
+                "EXIT",
                 "STATUS",
             ]);
             for row in &report.rows {
@@ -299,14 +347,24 @@ fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool)
                     ),
                     cpu_avg(row, report, color),
                     cpu_max(row, report, color),
+                    cpu_percent_cell(
+                        row.cpu_p95_percent,
+                        report.logical_cpu_count,
+                        report.cpu_normalized,
+                        color,
+                    ),
                     cell(format!("{:.1}", row.cpu_core_seconds)),
+                    cell(format_bytes(row.ram_p95_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_start_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_end_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_max_bytes, raw_bytes)),
                     signed_bytes_cell(row.ram_delta_bytes, raw_bytes, color),
                     cell(format_bytes(row.disk_read_total_bytes, raw_bytes)),
                     cell(format_bytes(row.disk_write_total_bytes, raw_bytes)),
+                    cell(format_bytes(row.io_p95_bytes, raw_bytes)),
                     cell(format_bps(row.io_bytes_per_second_avg, raw_bytes)),
+                    cell(row.started_count.to_string()),
+                    cell(row.exited_count.to_string()),
                     lifecycle_cell(&row.lifecycle_status),
                 ]);
             }
@@ -317,14 +375,19 @@ fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool)
                 "PROCS",
                 "CPU avg",
                 "CPU max",
+                "CPU p95",
                 "CPU-s",
+                "RAM p95",
                 "RAM start",
                 "RAM end",
                 "RAM max",
                 "RAM Δ",
                 "READ",
                 "WRITE",
+                "I/O p95",
                 "AVG I/O",
+                "START",
+                "EXIT",
                 "TOP",
                 "STATUS",
             ]);
@@ -334,14 +397,24 @@ fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool)
                     cell(row.process_count.to_string()),
                     cpu_avg(row, report, color),
                     cpu_max(row, report, color),
+                    cpu_percent_cell(
+                        row.cpu_p95_percent,
+                        report.logical_cpu_count,
+                        report.cpu_normalized,
+                        color,
+                    ),
                     cell(format!("{:.1}", row.cpu_core_seconds)),
+                    cell(format_bytes(row.ram_p95_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_start_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_end_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_max_bytes, raw_bytes)),
                     signed_bytes_cell(row.ram_delta_bytes, raw_bytes, color),
                     cell(format_bytes(row.disk_read_total_bytes, raw_bytes)),
                     cell(format_bytes(row.disk_write_total_bytes, raw_bytes)),
+                    cell(format_bytes(row.io_p95_bytes, raw_bytes)),
                     cell(format_bps(row.io_bytes_per_second_avg, raw_bytes)),
+                    cell(row.started_count.to_string()),
+                    cell(row.exited_count.to_string()),
                     truncated_cell(
                         row.top_process.as_deref().unwrap_or("n/a"),
                         TOP_PROCESS_MAX_CHARS,
@@ -352,7 +425,7 @@ fn print_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool)
         }
     }
 
-    println!("{table}");
+    format!("{table}\n")
 }
 
 fn snapshot_process_header(options: &SnapshotRenderOptions, color: bool) -> Vec<Cell> {
@@ -483,17 +556,19 @@ fn visible_row_range(
     start..end
 }
 
-fn print_ram_timeline(report: &RecordingReport, raw_bytes: bool, timeline_limit: usize) {
+fn render_ram_timeline(report: &RecordingReport, raw_bytes: bool, timeline_limit: usize) -> String {
     let mut rows = report.rows.clone();
     rows.sort_by_key(|row| Reverse(row.ram_max_bytes));
     rows.truncate(timeline_limit);
 
     if rows.is_empty() {
-        return;
+        return String::new();
     }
 
-    println!();
-    println!("RAM timeline, top {} by RAM max:", rows.len());
+    let mut output = String::new();
+    output.push('\n');
+    writeln!(&mut output, "RAM timeline, top {} by RAM max:", rows.len())
+        .expect("writing to a string cannot fail");
     for row in rows {
         let values = row
             .ram_timeline
@@ -503,14 +578,17 @@ fn print_ram_timeline(report: &RecordingReport, raw_bytes: bool, timeline_limit:
         let start = values.first().copied().unwrap_or(0);
         let end = values.last().copied().unwrap_or(0);
         let display_name = truncate_for_table(&row.display_name, TIMELINE_DISPLAY_MAX_CHARS);
-        println!(
+        writeln!(
+            &mut output,
             "{:<20} {:>10} {} {:>10}",
             display_name,
             format_bytes(start, raw_bytes),
             sparkline::render(&values, 40),
             format_bytes(end, raw_bytes)
-        );
+        )
+        .expect("writing to a string cannot fail");
     }
+    output
 }
 
 fn describe_filters(report: &RecordingReport) -> String {
@@ -533,6 +611,21 @@ fn describe_filters(report: &RecordingReport) -> String {
     }
     if !filters.command_regexes.is_empty() {
         parts.push(format!("cmd-regex={:?}", filters.command_regexes));
+    }
+    if !filters.executable_substrings.is_empty() {
+        parts.push(format!("exe={:?}", filters.executable_substrings));
+    }
+    if !filters.executable_regexes.is_empty() {
+        parts.push(format!("exe-regex={:?}", filters.executable_regexes));
+    }
+    if !filters.parent_pids.is_empty() {
+        parts.push(format!("parent={:?}", filters.parent_pids));
+    }
+    if !filters.parent_names.is_empty() {
+        parts.push(format!("parent-name={:?}", filters.parent_names));
+    }
+    if !filters.parent_regexes.is_empty() {
+        parts.push(format!("parent-regex={:?}", filters.parent_regexes));
     }
     if let Some(min_cpu) = filters.min_cpu_percent {
         parts.push(format!("min-cpu={min_cpu:.1}%"));

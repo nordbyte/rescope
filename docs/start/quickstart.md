@@ -12,6 +12,13 @@ Group by user and sort by resident memory:
 rescope snapshot --group user --sort ram --limit 10
 ```
 
+Use a profile when you do not want to remember group and sort flags:
+
+```bash
+rescope snapshot --profile io --limit 10
+rescope snapshot --profile tree --parent-name systemd
+```
+
 ## Live mode
 
 Plain refresh mode:
@@ -26,12 +33,18 @@ Interactive terminal mode:
 rescope live --tui --group command --sort cpu
 ```
 
-Press `o` for options, `?` for help, `/` for search, `Enter` for row details and `q`, `Esc` or `Ctrl-C` to exit.
+Press `o` for options, `?` for help, `/` for search, `Enter` for row details and `q`, `Esc` or `Ctrl-C` to exit. In details, press `f` to switch between frozen details and following the same process or group identity.
 
 ## Record a window
 
 ```bash
 rescope record --duration 30s --interval 1s --limit 10
+```
+
+Memory-focused recording:
+
+```bash
+rescope record --duration 30s --profile memory --include-idle
 ```
 
 Filter to one process family:

@@ -11,6 +11,8 @@ use sysinfo::{
 use crate::error::RescopeError;
 use crate::metrics::{ProcessIdentity, RawProcessSample, SystemSample};
 
+const USER_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+
 pub trait SampleSource {
     fn sample(&mut self) -> Result<SystemSample, RescopeError>;
 }
@@ -28,6 +30,7 @@ pub struct SysinfoSampler {
     previous: HashMap<ProcessIdentity, PreviousCounters>,
     config: SamplerConfig,
     last_sample_at: Option<Instant>,
+    users_refreshed_at: Instant,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,7 +56,16 @@ impl SysinfoSampler {
             previous: HashMap::new(),
             config,
             last_sample_at: None,
+            users_refreshed_at: Instant::now(),
         })
+    }
+
+    pub fn config(&self) -> SamplerConfig {
+        self.config
+    }
+
+    pub fn set_config(&mut self, config: SamplerConfig) {
+        self.config = config;
     }
 
     pub fn warm_up(&mut self, interval: Duration) -> Result<(), RescopeError> {
@@ -78,9 +90,20 @@ impl SysinfoSampler {
             true,
             process_refresh_kind(self.config),
         );
-        self.users.refresh();
+        if self.users_refreshed_at.elapsed() >= USER_REFRESH_INTERVAL {
+            self.users.refresh();
+            self.users_refreshed_at = Instant::now();
+        }
 
         let mut seen = HashSet::new();
+        let process_names = self
+            .system
+            .processes()
+            .iter()
+            .filter_map(|(pid, process)| {
+                os_to_string(process.name()).map(|name| (pid.as_u32(), name))
+            })
+            .collect::<HashMap<_, _>>();
         let mut processes = Vec::with_capacity(self.system.processes().len());
 
         for (pid, process) in self.system.processes() {
@@ -115,6 +138,10 @@ impl SysinfoSampler {
                 .and_then(|uid| self.users.get_user_by_id(uid))
                 .map(|user| user.name().to_string());
             let parent_pid = process.parent().map(|pid| pid.as_u32());
+            let parent_name = parent_pid
+                .and_then(|pid| process_names.get(&pid))
+                .cloned()
+                .filter(|name| !name.trim().is_empty());
             let executable = self
                 .config
                 .include_executable
@@ -132,6 +159,7 @@ impl SysinfoSampler {
                 user_id,
                 user_name,
                 parent_pid,
+                parent_name,
                 executable,
                 command: self
                     .config

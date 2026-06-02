@@ -3,11 +3,13 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use rescope_core::{
-    RecordingReportOptions, SampleSource, SamplerConfig, SysinfoSampler, build_recording_report,
-    filter_sample, units::MINIMUM_INTERVAL,
+    RecordingAccumulator, RecordingAccumulatorOptions, RecordingReportOptions, SampleSource,
+    SamplerConfig, SysinfoSampler, build_recording_report_from_accumulator, filter_sample,
+    units::MINIMUM_INTERVAL,
 };
 
 use crate::args::{Cli, RecordArgs};
+use crate::commands::verbose;
 use crate::output::{csv, json, table};
 
 pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
@@ -21,6 +23,19 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
         include_command: args.needs_command(),
         include_executable: args.needs_executable(),
     })?;
+    verbose(
+        cli,
+        format!(
+            "record group={:?} sort={:?} limit={} duration={} interval={} command={} executable={}",
+            args.effective_group(),
+            args.effective_sort(),
+            args.effective_limit(),
+            humantime::format_duration(args.duration),
+            humantime::format_duration(args.interval),
+            args.needs_command(),
+            args.needs_executable()
+        ),
+    );
     sampler.warm_up(args.interval)?;
 
     if !cli.quiet {
@@ -33,11 +48,27 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
 
     let recording_started = Instant::now();
     let deadline = recording_started + args.duration;
-    let mut samples = Vec::new();
+    let mut accumulator = RecordingAccumulator::new(RecordingAccumulatorOptions {
+        group_by: args.effective_group(),
+        sort_by: args.effective_sort(),
+        interval: args.interval,
+        show_command: args.effective_show_command(),
+        include_idle: args.effective_include_idle(),
+    });
 
     while Instant::now() < deadline {
         let sample = sampler.sample()?;
-        samples.push(filter_sample(&sample, &filter));
+        let filtered = filter_sample(&sample, &filter);
+        verbose(
+            cli,
+            format!(
+                "sample {} matched {} of {} processes",
+                accumulator.sample_count() + 1,
+                filtered.processes.len(),
+                sample.processes.len()
+            ),
+        );
+        accumulator.push_sample(&filtered);
 
         let now = Instant::now();
         if now >= deadline {
@@ -46,15 +77,15 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
         thread::sleep(args.interval.min(deadline - now));
     }
 
-    let report = build_recording_report(
-        &samples,
+    let report = build_recording_report_from_accumulator(
+        accumulator,
         RecordingReportOptions {
             requested_duration: recording_started.elapsed(),
             interval: args.interval,
-            group_by: args.group.into(),
-            sort_by: args.sort.into(),
+            group_by: args.effective_group(),
+            sort_by: args.effective_sort(),
             filters: filter,
-            show_command: args.filters.show_command,
+            show_command: args.effective_show_command(),
             limit: args.effective_limit(),
             include_idle: args.effective_include_idle(),
             normalize_cpu: args.normalize_cpu,

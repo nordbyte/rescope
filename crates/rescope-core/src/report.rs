@@ -1,6 +1,8 @@
 use std::time::{Duration, SystemTime};
 
-use crate::aggregate::{RecordingAggregateOptions, aggregate_recording, aggregate_snapshot};
+use crate::aggregate::{
+    RecordingAccumulator, RecordingAggregateOptions, aggregate_recording, aggregate_snapshot,
+};
 use crate::metrics::{FilterSpec, GroupBy, RecordingReport, SnapshotReport, SortBy, SystemSample};
 
 #[derive(Debug, Clone)]
@@ -104,11 +106,39 @@ pub fn build_recording_report(
     }
 }
 
+pub fn build_recording_report_from_accumulator(
+    accumulator: RecordingAccumulator,
+    options: RecordingReportOptions,
+) -> RecordingReport {
+    let started_at = accumulator.started_at().unwrap_or_else(SystemTime::now);
+    let ended_at = accumulator.ended_at().unwrap_or(started_at);
+    let sample_count = accumulator.sample_count();
+    let logical_cpu_count = accumulator.logical_cpu_count();
+    let rows = accumulator.into_rows(options.requested_duration, options.limit);
+
+    RecordingReport {
+        started_at,
+        ended_at,
+        duration: options.requested_duration,
+        interval: options.interval,
+        sample_count,
+        group_by: options.group_by,
+        sort_by: options.sort_by,
+        filters: options.filters,
+        logical_cpu_count,
+        cpu_normalized: options.normalize_cpu,
+        rows,
+        notes: platform_notes(),
+    }
+}
+
 pub fn platform_notes() -> Vec<String> {
     let mut notes = vec![
         "CPU% may exceed 100% on multi-core systems.".to_string(),
         "RAM is resident memory when the platform reports it that way.".to_string(),
         "Cached file operations may not increase per-process disk counters on Unix-like systems."
+            .to_string(),
+        "Recording percentiles are approximate for very long runs because timelines are bounded."
             .to_string(),
     ];
 

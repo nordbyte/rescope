@@ -1,0 +1,15 @@
+{
+  "name": "@rescope/rescope-darwin-x64",
+  "version": "0.1.0",
+  "description": "macOS x64 native binary for rescope",
+  "license": "MIT",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ]
+}

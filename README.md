@@ -8,12 +8,13 @@ Use the README for the first install and quick start. Full documentation is avai
 
 ## What rescope shows
 
-- CPU usage per process and aggregated by user, name, command, executable or parent PID.
-- Resident memory per process and aggregate RAM start/end/min/max/average/delta during recordings.
+- CPU usage per process and aggregated by user, name, command, executable or parent PID/name.
+- Resident memory per process and aggregate RAM start/end/min/max/p95/average/delta during recordings.
 - Per-process read and write counters with safe deltas.
+- Approximate recording percentiles for CPU, RAM and combined I/O plus started/exited process counts.
 - Live views in plain refresh mode or interactive terminal mode.
 - Time-bounded recording reports from the CLI or directly from the interactive TUI.
-- TUI menus for sorting, grouping, filters, column visibility, sampling, recording and exports.
+- TUI menus for sorting, grouping, filters, column visibility, sampling, recording, exports and frozen/following details.
 - JSON and CSV exports to files or stdout.
 
 ## Install
@@ -55,14 +56,34 @@ rescope snapshot --limit 10
 rescope snapshot --group user --sort ram --limit 10
 rescope snapshot --group executable --sort io --all
 rescope snapshot --name-regex '^(node|bun)$' --min-ram 512MiB
+rescope snapshot --profile tree --parent-name systemd
 rescope live --tui --group command --sort cpu
+rescope live --tui --profile io
 rescope live --once --json -
 rescope record --duration 1m --interval 1s --group user
+rescope record --duration 30s --profile memory --include-idle
 rescope record --duration 30s --name node --json report.json --csv report.csv
 ```
 
 Running `rescope` without a subcommand is equivalent to `rescope live`.
-In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details, `s` for sort, `v` for columns, `r` for recording and `e` for export. Menus use up/down plus Enter, so grouping, sorting, filters, view options, sampling and exports can be changed without remembering CLI flags.
+In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details, `s` for sort, `v` for columns, `r` for recording and `e` for export. In details, `f` toggles frozen versus following the same process or group identity. Menus use up/down plus Enter, so grouping, sorting, filters, view options, sampling and exports can be changed without remembering CLI flags.
+
+Profiles are available with `--profile cpu|memory|io|commands|users|tree`. A JSON config file can provide defaults:
+
+```json
+{
+  "profile": "io",
+  "limit": 15,
+  "interval": "1s",
+  "hide_self": true
+}
+```
+
+Use it with:
+
+```bash
+rescope --config rescope.json live --tui
+```
 
 ## Privacy
 
@@ -76,7 +97,7 @@ CPU values can exceed `100%` on multi-core systems. Use `--normalize-cpu` to dis
 
 RAM is resident memory when the platform exposes it that way. Disk I/O is platform-dependent: cached operations may not increase counters on Unix-like systems, and Windows counters may include non-disk I/O depending on the OS API.
 
-Recording reports hide rows with no CPU, I/O or RAM movement by default. Use `--include-idle` to keep the current limit and include them, or `--all` to include every row.
+Recording reports are aggregated as samples arrive and hide rows with no CPU, I/O or RAM movement by default. Use `--include-idle` to keep the current limit and include them, or `--all` to include every row.
 
 ## Documentation
 
@@ -98,6 +119,7 @@ Recording reports hide rows with no CPU, I/O or RAM movement by default. Use `--
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+npm run npm:test
 npm run docs:verify
 npm run npm:smoke
 ```

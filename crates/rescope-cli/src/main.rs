@@ -9,6 +9,6 @@ use clap::Parser;
 use crate::args::Cli;
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse().apply_config()?;
     commands::run(cli)
 }

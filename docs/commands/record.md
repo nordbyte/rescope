@@ -11,6 +11,7 @@ rescope record --duration <DURATION> [OPTIONS]
 ```bash
 rescope record --duration 30s --interval 1s
 rescope record --duration 1m --group user --sort io
+rescope record --duration 30s --profile memory --include-idle
 rescope record --duration 1m --name node --json report.json
 rescope record --duration 5m --include-idle --all
 ```
@@ -25,3 +26,4 @@ rescope record --duration 5m --include-idle --all
 - `--normalize-cpu` display CPU divided by logical CPU count
 
 Common filters, grouping and exports are documented in [CLI options](../reference/options.md).
+Recording reports include approximate CPU/RAM/I/O percentiles and started/exited process counts.

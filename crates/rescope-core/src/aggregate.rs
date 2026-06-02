@@ -2,7 +2,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, SystemTime};
 
 use crate::metrics::{
-    AggregateRow, GroupBy, GroupKey, RawProcessSample, SnapshotRow, SortBy, SystemSample,
+    AggregateRow, GroupBy, GroupKey, ProcessIdentity, RawProcessSample, SnapshotRow, SortBy,
+    SystemSample,
 };
 use crate::sort::{sort_recording_rows_limit, sort_snapshot_rows_limit};
 
@@ -17,6 +18,100 @@ pub struct RecordingAggregateOptions {
     pub show_command: bool,
     pub limit: usize,
     pub include_idle: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RecordingAccumulatorOptions {
+    pub group_by: GroupBy,
+    pub sort_by: SortBy,
+    pub interval: Duration,
+    pub show_command: bool,
+    pub include_idle: bool,
+}
+
+#[derive(Debug)]
+pub struct RecordingAccumulator {
+    options: RecordingAccumulatorOptions,
+    rows_by_key: HashMap<GroupKey, RecordingAcc>,
+    sample_count: usize,
+    started_at: Option<SystemTime>,
+    ended_at: Option<SystemTime>,
+    logical_cpu_count: usize,
+}
+
+impl RecordingAccumulator {
+    pub fn new(options: RecordingAccumulatorOptions) -> Self {
+        Self {
+            options,
+            rows_by_key: HashMap::new(),
+            sample_count: 0,
+            started_at: None,
+            ended_at: None,
+            logical_cpu_count: 1,
+        }
+    }
+
+    pub fn push_sample(&mut self, sample: &SystemSample) {
+        let fallback_interval_seconds = duration_seconds(self.options.interval);
+        let sample_interval_seconds = if sample.sample_interval.is_zero() {
+            fallback_interval_seconds
+        } else {
+            duration_seconds(sample.sample_interval)
+        };
+        self.sample_count += 1;
+        self.started_at.get_or_insert(sample.timestamp);
+        self.ended_at = Some(sample.timestamp);
+        self.logical_cpu_count = self.logical_cpu_count.max(sample.logical_cpu_count);
+
+        let grouped = group_sample_for_recording(
+            sample,
+            self.options.group_by,
+            self.options.sort_by,
+            self.options.show_command,
+        );
+        for (key, group_sample) in grouped {
+            self.rows_by_key
+                .entry(key.clone())
+                .or_insert_with(|| RecordingAcc::new(key, self.options.group_by, &group_sample))
+                .add(&group_sample, sample_interval_seconds);
+        }
+    }
+
+    pub fn sample_count(&self) -> usize {
+        self.sample_count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.sample_count == 0
+    }
+
+    pub fn started_at(&self) -> Option<SystemTime> {
+        self.started_at
+    }
+
+    pub fn ended_at(&self) -> Option<SystemTime> {
+        self.ended_at
+    }
+
+    pub fn logical_cpu_count(&self) -> usize {
+        self.logical_cpu_count.max(1)
+    }
+
+    pub fn into_rows(self, measured_duration: Duration, limit: usize) -> Vec<AggregateRow> {
+        let options = self.options;
+        let started_at = self.started_at;
+        let ended_at = self.ended_at;
+        let fallback_interval_seconds = duration_seconds(options.interval);
+        let measured_seconds = duration_seconds(measured_duration).max(fallback_interval_seconds);
+        let mut rows: Vec<AggregateRow> = self
+            .rows_by_key
+            .into_values()
+            .filter(|acc| options.include_idle || acc.has_activity())
+            .map(|acc| acc.into_row(measured_seconds, started_at, ended_at))
+            .collect();
+        sort_recording_rows_limit(&mut rows, options.sort_by, limit);
+        rows
+    }
 }
 
 pub fn aggregate_snapshot(
@@ -52,40 +147,17 @@ pub fn aggregate_recording(
     samples: &[SystemSample],
     options: RecordingAggregateOptions,
 ) -> Vec<AggregateRow> {
-    let fallback_interval_seconds = duration_seconds(options.interval);
-    let measured_seconds =
-        duration_seconds(options.measured_duration).max(fallback_interval_seconds);
-    let started_at = samples.first().map(|sample| sample.timestamp);
-    let ended_at = samples.last().map(|sample| sample.timestamp);
-    let mut rows_by_key: HashMap<GroupKey, RecordingAcc> = HashMap::new();
-
+    let mut accumulator = RecordingAccumulator::new(RecordingAccumulatorOptions {
+        group_by: options.group_by,
+        sort_by: options.sort_by,
+        interval: options.interval,
+        show_command: options.show_command,
+        include_idle: options.include_idle,
+    });
     for sample in samples {
-        let sample_interval_seconds = if sample.sample_interval.is_zero() {
-            fallback_interval_seconds
-        } else {
-            duration_seconds(sample.sample_interval)
-        };
-        let grouped = group_sample_for_recording(
-            sample,
-            options.group_by,
-            options.sort_by,
-            options.show_command,
-        );
-        for (key, group_sample) in grouped {
-            rows_by_key
-                .entry(key.clone())
-                .or_insert_with(|| RecordingAcc::new(key, options.group_by, &group_sample))
-                .add(&group_sample, sample_interval_seconds);
-        }
+        accumulator.push_sample(sample);
     }
-
-    let mut rows: Vec<AggregateRow> = rows_by_key
-        .into_values()
-        .filter(|acc| options.include_idle || acc.has_activity())
-        .map(|acc| acc.into_row(measured_seconds, started_at, ended_at))
-        .collect();
-    sort_recording_rows_limit(&mut rows, options.sort_by, options.limit);
-    rows
+    accumulator.into_rows(options.measured_duration, options.limit)
 }
 
 fn group_sample_for_recording(
@@ -126,12 +198,38 @@ fn group_key(process: &RawProcessSample, group_by: GroupBy) -> GroupKey {
                 .filter(|path| !path.trim().is_empty())
                 .unwrap_or_else(|| "unknown".to_string()),
         ),
-        GroupBy::Parent => GroupKey::Parent(
-            process
-                .parent_pid
-                .map(|pid| pid.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-        ),
+        GroupBy::Parent => GroupKey::Parent(parent_display(process)),
+    }
+}
+
+fn display_name_for_group(
+    group_type: GroupBy,
+    process: &RawProcessSample,
+    show_command: bool,
+) -> String {
+    match group_type {
+        GroupBy::Process => process.display_process(show_command),
+        GroupBy::Name => process.identity.name.clone(),
+        GroupBy::User => process.user_display(),
+        GroupBy::Command => process
+            .command
+            .clone()
+            .filter(|command| !command.trim().is_empty())
+            .unwrap_or_else(|| process.identity.name.clone()),
+        GroupBy::Executable => process
+            .executable
+            .clone()
+            .filter(|path| !path.trim().is_empty())
+            .unwrap_or_else(|| "unknown".to_string()),
+        GroupBy::Parent => parent_display(process),
+    }
+}
+
+fn parent_display(process: &RawProcessSample) -> String {
+    match (process.parent_pid, process.parent_name.as_deref()) {
+        (Some(pid), Some(name)) if !name.trim().is_empty() => format!("{pid} ({name})"),
+        (Some(pid), _) => pid.to_string(),
+        (None, _) => "unknown".to_string(),
     }
 }
 
@@ -189,25 +287,7 @@ impl SnapshotAcc {
         show_command: bool,
         timestamp: SystemTime,
     ) -> Self {
-        let display_name = match group_type {
-            GroupBy::Process => process.display_process(show_command),
-            GroupBy::Name => process.identity.name.clone(),
-            GroupBy::User => process.user_display(),
-            GroupBy::Command => process
-                .command
-                .clone()
-                .filter(|command| !command.trim().is_empty())
-                .unwrap_or_else(|| process.identity.name.clone()),
-            GroupBy::Executable => process
-                .executable
-                .clone()
-                .filter(|path| !path.trim().is_empty())
-                .unwrap_or_else(|| "unknown".to_string()),
-            GroupBy::Parent => process
-                .parent_pid
-                .map(|pid| pid.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-        };
+        let display_name = display_name_for_group(group_type, process, show_command);
         Self {
             key,
             group_type,
@@ -277,6 +357,7 @@ struct GroupSample {
     pid: Option<u32>,
     user_name: Option<String>,
     users: BTreeSet<String>,
+    identities: Vec<ProcessIdentity>,
     process_count: usize,
     cpu_percent: f32,
     memory_bytes: u64,
@@ -293,30 +374,13 @@ impl GroupSample {
         show_command: bool,
         timestamp: SystemTime,
     ) -> Self {
-        let display_name = match group_type {
-            GroupBy::Process => process.display_process(show_command),
-            GroupBy::Name => process.identity.name.clone(),
-            GroupBy::User => process.user_display(),
-            GroupBy::Command => process
-                .command
-                .clone()
-                .filter(|command| !command.trim().is_empty())
-                .unwrap_or_else(|| process.identity.name.clone()),
-            GroupBy::Executable => process
-                .executable
-                .clone()
-                .filter(|path| !path.trim().is_empty())
-                .unwrap_or_else(|| "unknown".to_string()),
-            GroupBy::Parent => process
-                .parent_pid
-                .map(|pid| pid.to_string())
-                .unwrap_or_else(|| "unknown".to_string()),
-        };
+        let display_name = display_name_for_group(group_type, process, show_command);
         Self {
             display_name,
             pid: (group_type == GroupBy::Process).then_some(process.identity.pid),
             user_name: matches!(group_type, GroupBy::Process).then(|| process.user_display()),
             users: BTreeSet::new(),
+            identities: Vec::new(),
             process_count: 0,
             cpu_percent: 0.0,
             memory_bytes: 0,
@@ -334,6 +398,7 @@ impl GroupSample {
         self.read_delta_bytes += process.disk_read_delta_bytes;
         self.write_delta_bytes += process.disk_write_delta_bytes;
         self.users.insert(process.user_display());
+        self.identities.push(process.identity.clone());
 
         let process_name = process.display_process(show_command);
         let contribution = metric_contribution(process, sort_by);
@@ -359,14 +424,19 @@ struct RecordingAcc {
     top_process: Option<(String, f64)>,
     cpu_max_percent: f32,
     cpu_core_seconds: f64,
+    cpu_samples: Vec<f32>,
     ram_start_bytes: u64,
     ram_end_bytes: u64,
     ram_min_bytes: u64,
     ram_max_bytes: u64,
     ram_sum_bytes: u128,
     ram_sample_count: usize,
+    ram_samples: Vec<u64>,
     disk_read_total_bytes: u64,
     disk_write_total_bytes: u64,
+    io_samples: Vec<u64>,
+    identity_first_seen: HashMap<ProcessIdentity, SystemTime>,
+    identity_last_seen: HashMap<ProcessIdentity, SystemTime>,
     first_seen: SystemTime,
     last_seen: SystemTime,
     ram_timeline: Vec<(SystemTime, u64)>,
@@ -388,14 +458,19 @@ impl RecordingAcc {
             top_process: None,
             cpu_max_percent: 0.0,
             cpu_core_seconds: 0.0,
+            cpu_samples: Vec::new(),
             ram_start_bytes: sample.memory_bytes,
             ram_end_bytes: sample.memory_bytes,
             ram_min_bytes: sample.memory_bytes,
             ram_max_bytes: sample.memory_bytes,
             ram_sum_bytes: 0,
             ram_sample_count: 0,
+            ram_samples: Vec::new(),
             disk_read_total_bytes: 0,
             disk_write_total_bytes: 0,
+            io_samples: Vec::new(),
+            identity_first_seen: HashMap::new(),
+            identity_last_seen: HashMap::new(),
             first_seen: sample.timestamp,
             last_seen: sample.timestamp,
             ram_timeline: Vec::new(),
@@ -417,14 +492,27 @@ impl RecordingAcc {
         self.max_process_count = self.max_process_count.max(sample.process_count);
         self.cpu_max_percent = self.cpu_max_percent.max(sample.cpu_percent);
         self.cpu_core_seconds += sample.cpu_percent as f64 / 100.0 * interval_seconds;
+        push_bounded_metric(&mut self.cpu_samples, sample.cpu_percent);
         self.ram_end_bytes = sample.memory_bytes;
         self.ram_min_bytes = self.ram_min_bytes.min(sample.memory_bytes);
         self.ram_max_bytes = self.ram_max_bytes.max(sample.memory_bytes);
         self.ram_sum_bytes += sample.memory_bytes as u128;
         self.ram_sample_count += 1;
+        push_bounded_metric(&mut self.ram_samples, sample.memory_bytes);
         self.disk_read_total_bytes += sample.read_delta_bytes;
         self.disk_write_total_bytes += sample.write_delta_bytes;
+        push_bounded_metric(
+            &mut self.io_samples,
+            sample.read_delta_bytes + sample.write_delta_bytes,
+        );
         self.last_seen = sample.timestamp;
+        for identity in &sample.identities {
+            self.identity_first_seen
+                .entry(identity.clone())
+                .or_insert(sample.timestamp);
+            self.identity_last_seen
+                .insert(identity.clone(), sample.timestamp);
+        }
         push_bounded_timeline(
             &mut self.ram_timeline,
             (sample.timestamp, sample.memory_bytes),
@@ -464,6 +552,8 @@ impl RecordingAcc {
             (self.ram_sum_bytes / self.ram_sample_count as u128) as u64
         };
         let disk_io_total_bytes = self.disk_read_total_bytes + self.disk_write_total_bytes;
+        let started_count = count_started_after(&self.identity_first_seen, recording_started_at);
+        let exited_count = count_exited_before(&self.identity_last_seen, recording_ended_at);
 
         AggregateRow {
             key: self.key,
@@ -476,19 +566,25 @@ impl RecordingAcc {
             top_process: self.top_process.map(|(name, _)| name),
             cpu_avg_percent: ((self.cpu_core_seconds / measured_seconds) * 100.0) as f32,
             cpu_max_percent: self.cpu_max_percent,
+            cpu_p95_percent: percentile_f32(&self.cpu_samples, 0.95),
+            cpu_p99_percent: percentile_f32(&self.cpu_samples, 0.99),
             cpu_core_seconds: self.cpu_core_seconds,
             ram_start_bytes: self.ram_start_bytes,
             ram_end_bytes: self.ram_end_bytes,
             ram_min_bytes: self.ram_min_bytes,
             ram_max_bytes: self.ram_max_bytes,
+            ram_p95_bytes: percentile_u64(&self.ram_samples, 0.95),
             ram_avg_bytes,
             ram_delta_bytes: self.ram_end_bytes as i64 - self.ram_start_bytes as i64,
             disk_read_total_bytes: self.disk_read_total_bytes,
             disk_write_total_bytes: self.disk_write_total_bytes,
             disk_io_total_bytes,
+            io_p95_bytes: percentile_u64(&self.io_samples, 0.95),
             read_bytes_per_second_avg: self.disk_read_total_bytes as f64 / measured_seconds,
             write_bytes_per_second_avg: self.disk_write_total_bytes as f64 / measured_seconds,
             io_bytes_per_second_avg: disk_io_total_bytes as f64 / measured_seconds,
+            started_count,
+            exited_count,
             first_seen: self.first_seen,
             last_seen: self.last_seen,
             lifecycle_status: lifecycle_status(
@@ -516,6 +612,80 @@ fn push_bounded_timeline<T: Copy>(timeline: &mut Vec<(SystemTime, T)>, entry: (S
         *timeline = retained;
     }
     timeline.push(entry);
+}
+
+fn push_bounded_metric<T: Copy>(values: &mut Vec<T>, entry: T) {
+    if values.len() >= MAX_TIMELINE_POINTS {
+        let retained = values
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, value)| (index % 2 == 0).then_some(value))
+            .collect();
+        *values = retained;
+    }
+    values.push(entry);
+}
+
+fn percentile_f32(values: &[f32], percentile: f64) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    sorted[percentile_index(sorted.len(), percentile)]
+}
+
+fn percentile_u64(values: &[u64], percentile: f64) -> u64 {
+    if values.is_empty() {
+        return 0;
+    }
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable();
+    sorted[percentile_index(sorted.len(), percentile)]
+}
+
+fn percentile_index(len: usize, percentile: f64) -> usize {
+    let clamped = percentile.clamp(0.0, 1.0);
+    ((len.saturating_sub(1)) as f64 * clamped).ceil() as usize
+}
+
+fn count_started_after(
+    identity_first_seen: &HashMap<ProcessIdentity, SystemTime>,
+    recording_started_at: Option<SystemTime>,
+) -> usize {
+    let Some(started_at) = recording_started_at else {
+        return 0;
+    };
+    identity_first_seen
+        .values()
+        .filter(|first_seen| strictly_after(**first_seen, started_at))
+        .count()
+}
+
+fn count_exited_before(
+    identity_last_seen: &HashMap<ProcessIdentity, SystemTime>,
+    recording_ended_at: Option<SystemTime>,
+) -> usize {
+    let Some(ended_at) = recording_ended_at else {
+        return 0;
+    };
+    identity_last_seen
+        .values()
+        .filter(|last_seen| strictly_before(**last_seen, ended_at))
+        .count()
+}
+
+fn strictly_after(value: SystemTime, reference: SystemTime) -> bool {
+    value
+        .duration_since(reference)
+        .is_ok_and(|duration| !duration.is_zero())
+}
+
+fn strictly_before(value: SystemTime, reference: SystemTime) -> bool {
+    reference
+        .duration_since(value)
+        .is_ok_and(|duration| !duration.is_zero())
 }
 
 fn lifecycle_status(
@@ -564,6 +734,7 @@ mod tests {
             user_id: Some(user.to_string()),
             user_name: Some(user.to_string()),
             parent_pid: Some(1),
+            parent_name: Some("init".to_string()),
             executable: Some(format!("/usr/bin/{name}")),
             command: Some(format!("/usr/bin/{name} --flag")),
             memory_bytes: ram,
@@ -670,8 +841,49 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert!((rows[0].cpu_core_seconds - 1.5).abs() < f64::EPSILON);
+        assert_eq!(rows[0].cpu_p95_percent, 100.0);
+        assert_eq!(rows[0].ram_p95_bytes, 200);
+        assert_eq!(rows[0].io_p95_bytes, 20);
         assert_eq!(rows[0].ram_delta_bytes, 100);
         assert_eq!(rows[0].disk_write_total_bytes, 30);
+    }
+
+    #[test]
+    fn streaming_recording_matches_batch_aggregation() {
+        let samples = vec![
+            system(vec![process(1, 1, "node", "alice", 100.0, 100, (0, 10))]),
+            system(vec![process(1, 1, "node", "alice", 50.0, 200, (0, 20))]),
+        ];
+        let mut accumulator = RecordingAccumulator::new(RecordingAccumulatorOptions {
+            group_by: GroupBy::Name,
+            sort_by: SortBy::Io,
+            interval: Duration::from_secs(1),
+            show_command: false,
+            include_idle: true,
+        });
+        for sample in &samples {
+            accumulator.push_sample(sample);
+        }
+
+        let streaming = accumulator.into_rows(Duration::from_secs(2), 10);
+        let batch = aggregate_recording(
+            &samples,
+            RecordingAggregateOptions {
+                group_by: GroupBy::Name,
+                sort_by: SortBy::Io,
+                interval: Duration::from_secs(1),
+                measured_duration: Duration::from_secs(2),
+                show_command: false,
+                limit: 10,
+                include_idle: true,
+            },
+        );
+
+        assert_eq!(
+            streaming[0].disk_write_total_bytes,
+            batch[0].disk_write_total_bytes
+        );
+        assert_eq!(streaming[0].ram_p95_bytes, batch[0].ram_p95_bytes);
     }
 
     #[test]
@@ -710,7 +922,7 @@ mod tests {
             false,
             10,
         );
-        assert_eq!(parent_rows[0].display_name, "1");
+        assert_eq!(parent_rows[0].display_name, "1 (init)");
     }
 
     #[test]
@@ -742,7 +954,11 @@ mod tests {
         );
 
         assert_eq!(rows[0].lifecycle_status, "exited_during_recording");
+        assert_eq!(rows[0].started_count, 0);
+        assert_eq!(rows[0].exited_count, 1);
         assert_eq!(rows[1].lifecycle_status, "started_during_recording");
+        assert_eq!(rows[1].started_count, 1);
+        assert_eq!(rows[1].exited_count, 0);
     }
 
     #[test]

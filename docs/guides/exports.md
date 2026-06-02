@@ -11,6 +11,8 @@ rescope live --once --json -
 
 In `rescope live --tui`, press `e` for snapshot exports or `r` for recording exports. The TUI opens a path prompt before writing and refuses to overwrite an existing file.
 
+Recording exports include approximate percentile fields and started/exited process counts. JSON includes bounded timelines; CSV keeps one row per aggregate result.
+
 ## Atomic file writes
 
 File exports are written through a temporary file in the destination directory and then renamed into place.

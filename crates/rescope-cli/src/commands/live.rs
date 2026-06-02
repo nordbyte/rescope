@@ -7,6 +7,7 @@ use rescope_core::{
 };
 
 use crate::args::{Cli, LiveArgs};
+use crate::commands::verbose;
 use crate::output::{csv, json, table, terminal};
 use crate::tui;
 
@@ -30,19 +31,41 @@ pub fn run(cli: &Cli, args: &LiveArgs) -> Result<()> {
         include_command: args.needs_command(),
         include_executable: args.needs_executable(),
     })?;
+    verbose(
+        cli,
+        format!(
+            "live group={:?} sort={:?} limit={} interval={} command={} executable={}",
+            args.effective_group(),
+            args.effective_sort(),
+            args.effective_limit(),
+            humantime::format_duration(args.interval),
+            args.needs_command(),
+            args.needs_executable()
+        ),
+    );
     sampler.warm_up(args.interval)?;
 
     loop {
         let sample = sampler.sample()?;
         let filtered = filter_sample(&sample, &filter);
+        if args.once {
+            verbose(
+                cli,
+                format!(
+                    "matched {} of {} processes",
+                    filtered.processes.len(),
+                    sample.processes.len()
+                ),
+            );
+        }
         let report = build_snapshot_report(
             &filtered,
             SnapshotReportOptions {
                 interval: args.interval,
-                group_by: args.group.into(),
-                sort_by: args.sort.into(),
+                group_by: args.effective_group(),
+                sort_by: args.effective_sort(),
                 filters: filter.clone(),
-                show_command: args.filters.show_command,
+                show_command: args.effective_show_command(),
                 limit: args.effective_limit(),
                 normalize_cpu: args.normalize_cpu,
             },

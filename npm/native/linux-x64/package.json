@@ -1,0 +1,15 @@
+{
+  "name": "@rescope/rescope-linux-x64",
+  "version": "0.1.0",
+  "description": "Linux x64 native binary for rescope",
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ]
+}

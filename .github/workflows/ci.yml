@@ -27,6 +27,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            docs/package-lock.json
+            npm/rescope/package-lock.json
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -37,14 +41,20 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: Build CLI binary
+        run: cargo build -p rescope-cli
+
       - name: Docs verify
         run: npm run docs:verify
 
+      - name: npm wrapper tests
+        run: npm run npm:test
+
       - name: Snapshot smoke
-        run: cargo run -p rescope-cli -- snapshot --limit 5
+        run: target/debug/rescope snapshot --limit 5
 
       - name: Record smoke
-        run: cargo run -p rescope-cli -- record --duration 3s --interval 1s --limit 5
+        run: target/debug/rescope record --duration 3s --interval 1s --limit 5
 
       - name: npm wrapper smoke
         run: npm run npm:smoke
@@ -53,7 +63,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          script -qec "timeout 3s cargo run -p rescope-cli -- live --tui --interval 250ms --limit 5" /tmp/rescope-tui.log
+          script -qec "timeout 3s target/debug/rescope live --tui --interval 250ms --limit 5" /tmp/rescope-tui.log
           status=$?
           set -e
           if [ "$status" -ne 0 ] && [ "$status" -ne 124 ]; then
@@ -61,3 +71,27 @@ jobs:
             exit "$status"
           fi
           grep -q "rescope live" /tmp/rescope-tui.log
+
+  cross-platform:
+    name: Smoke ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Snapshot smoke
+        run: cargo run -p rescope-cli -- snapshot --limit 5

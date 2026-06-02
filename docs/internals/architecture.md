@@ -17,7 +17,7 @@ The core crate has no terminal UI code. It owns:
 - process identity
 - filtering
 - grouping
-- aggregation
+- streaming and batch aggregation
 - sorting
 - report data structures
 - unit formatting helpers
@@ -27,11 +27,12 @@ The core crate has no terminal UI code. It owns:
 The CLI crate owns:
 
 - Clap argument parsing
+- JSON config default merging
 - command execution
 - plain and interactive terminal output
 - JSON and CSV export
-- live loop and recording loop control
+- live loop and streaming recording loop control
 
 ## npm/rescope
 
-The npm package is a wrapper. It locates a native binary in an optional platform package, a vendor directory or a local Cargo target directory.
+The npm package is a wrapper. It locates a native binary in an optional platform package, a vendor directory or a local Cargo target directory. Platform package metadata lives under `npm/native`.

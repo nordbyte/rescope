@@ -2,9 +2,11 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use anyhow::{Context, Result as AnyhowResult};
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use regex::RegexBuilder;
 use rescope_core::{FilterSpec, GroupBy, RescopeError, SortBy, parse_duration};
+use serde::Deserialize;
 
 #[derive(Debug, Parser)]
 #[command(name = "rescope")]
@@ -50,6 +52,13 @@ pub struct Cli {
     pub verbose: u8,
 
     #[arg(
+        long,
+        global = true,
+        help = "Load default options from a JSON config file"
+    )]
+    pub config: Option<PathBuf>,
+
+    #[arg(
         short,
         long,
         global = true,
@@ -77,6 +86,64 @@ impl Cli {
             .filter(|path| path.as_deref() == Some(std::path::Path::new("-")))
             .count()
     }
+
+    pub fn apply_config(mut self) -> AnyhowResult<Self> {
+        let Some(path) = self.config.clone() else {
+            return Ok(self);
+        };
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading config {}", path.display()))?;
+        let config: CliConfig = serde_json::from_str(&text)
+            .with_context(|| format!("parsing config {}", path.display()))?;
+
+        if !self.bytes
+            && let Some(bytes) = config.bytes
+        {
+            self.bytes = bytes;
+        }
+        if !self.quiet
+            && let Some(quiet) = config.quiet
+        {
+            self.quiet = quiet;
+        }
+        if !self.no_color
+            && let Some(no_color) = config.no_color
+        {
+            self.no_color = no_color;
+        }
+        if matches!(self.color, ColorMode::Auto)
+            && let Some(color) = config.color
+        {
+            self.color = color;
+        }
+
+        match &mut self.command {
+            Some(Command::Snapshot(args)) => apply_snapshot_config(args, &config)?,
+            Some(Command::Live(args)) => apply_live_config(args, &config)?,
+            Some(Command::Record(args)) => apply_record_config(args, &config)?,
+            None => {}
+        }
+
+        Ok(self)
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+pub struct CliConfig {
+    pub color: Option<ColorMode>,
+    pub no_color: Option<bool>,
+    pub bytes: Option<bool>,
+    pub quiet: Option<bool>,
+    pub profile: Option<CliProfile>,
+    pub group: Option<CliGroupBy>,
+    pub sort: Option<CliSortBy>,
+    pub limit: Option<usize>,
+    pub interval: Option<String>,
+    pub normalize_cpu: Option<bool>,
+    pub show_command: Option<bool>,
+    pub hide_self: Option<bool>,
+    pub include_idle: Option<bool>,
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -90,6 +157,13 @@ pub enum Command {
 pub struct SnapshotArgs {
     #[command(flatten)]
     pub filters: FilterArgs,
+
+    #[arg(
+        long,
+        value_enum,
+        help = "Apply a convenience preset for common investigations"
+    )]
+    pub profile: Option<CliProfile>,
 
     #[arg(
         long,
@@ -127,6 +201,13 @@ pub struct SnapshotArgs {
 pub struct LiveArgs {
     #[command(flatten)]
     pub filters: FilterArgs,
+
+    #[arg(
+        long,
+        value_enum,
+        help = "Apply a convenience preset for common investigations"
+    )]
+    pub profile: Option<CliProfile>,
 
     #[arg(
         long,
@@ -173,6 +254,13 @@ pub struct RecordArgs {
 
     #[arg(long, value_parser = parse_duration_arg, help = "Recording duration, for example 30s or 5m")]
     pub duration: Duration,
+
+    #[arg(
+        long,
+        value_enum,
+        help = "Apply a convenience preset for common investigations"
+    )]
+    pub profile: Option<CliProfile>,
 
     #[arg(long, default_value = "1s", value_parser = parse_duration_arg, help = "Sampling interval")]
     pub interval: Duration,
@@ -224,6 +312,21 @@ pub struct FilterArgs {
     #[arg(long = "cmd-regex", action = ArgAction::Append, value_parser = parse_regex_arg, help = "Only include command lines matching this case-insensitive regex")]
     pub command_regexes: Vec<String>,
 
+    #[arg(long = "exe", action = ArgAction::Append, help = "Only include executable paths containing this text; repeat for alternatives")]
+    pub executable_substrings: Vec<String>,
+
+    #[arg(long = "exe-regex", action = ArgAction::Append, value_parser = parse_regex_arg, help = "Only include executable paths matching this case-insensitive regex")]
+    pub executable_regexes: Vec<String>,
+
+    #[arg(long = "parent", action = ArgAction::Append, help = "Only include processes whose parent PID matches; repeat for alternatives")]
+    pub parent_pids: Vec<u32>,
+
+    #[arg(long = "parent-name", action = ArgAction::Append, help = "Only include parent process names containing this text; repeat for alternatives")]
+    pub parent_names: Vec<String>,
+
+    #[arg(long = "parent-regex", action = ArgAction::Append, value_parser = parse_regex_arg, help = "Only include parent process names matching this case-insensitive regex")]
+    pub parent_regexes: Vec<String>,
+
     #[arg(long, value_parser = parse_non_negative_f32, help = "Only include processes at or above this CPU percentage")]
     pub min_cpu: Option<f32>,
 
@@ -252,6 +355,11 @@ impl FilterArgs {
             name_regexes: self.name_regexes.clone(),
             command_substrings: self.command_substrings.clone(),
             command_regexes: self.command_regexes.clone(),
+            executable_substrings: self.executable_substrings.clone(),
+            executable_regexes: self.executable_regexes.clone(),
+            parent_pids: self.parent_pids.clone(),
+            parent_names: self.parent_names.clone(),
+            parent_regexes: self.parent_regexes.clone(),
             min_cpu_percent: self.min_cpu,
             min_ram_bytes: self.min_ram,
             min_io_delta_bytes: self.min_io,
@@ -263,9 +371,14 @@ impl FilterArgs {
     pub fn needs_command(&self) -> bool {
         self.show_command || !self.command_substrings.is_empty() || !self.command_regexes.is_empty()
     }
+
+    pub fn needs_executable(&self) -> bool {
+        !self.executable_substrings.is_empty() || !self.executable_regexes.is_empty()
+    }
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum CliGroupBy {
     Process,
     Name,
@@ -275,7 +388,8 @@ pub enum CliGroupBy {
     Parent,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum CliSortBy {
     Cpu,
     Ram,
@@ -287,7 +401,19 @@ pub enum CliSortBy {
     User,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CliProfile {
+    Cpu,
+    Memory,
+    Io,
+    Commands,
+    Users,
+    Tree,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum ColorMode {
     Auto,
     Always,
@@ -319,6 +445,128 @@ impl From<CliSortBy> for SortBy {
             CliSortBy::Name => SortBy::Name,
             CliSortBy::User => SortBy::User,
         }
+    }
+}
+
+fn apply_snapshot_config(args: &mut SnapshotArgs, config: &CliConfig) -> AnyhowResult<()> {
+    apply_common_config(
+        &mut args.filters,
+        &mut args.profile,
+        &mut args.group,
+        &mut args.sort,
+        &mut args.limit,
+        &mut args.interval,
+        &mut args.normalize_cpu,
+        config,
+        CliSortBy::Cpu,
+    )
+}
+
+fn apply_live_config(args: &mut LiveArgs, config: &CliConfig) -> AnyhowResult<()> {
+    apply_common_config(
+        &mut args.filters,
+        &mut args.profile,
+        &mut args.group,
+        &mut args.sort,
+        &mut args.limit,
+        &mut args.interval,
+        &mut args.normalize_cpu,
+        config,
+        CliSortBy::Cpu,
+    )
+}
+
+fn apply_record_config(args: &mut RecordArgs, config: &CliConfig) -> AnyhowResult<()> {
+    apply_common_config(
+        &mut args.filters,
+        &mut args.profile,
+        &mut args.group,
+        &mut args.sort,
+        &mut args.limit,
+        &mut args.interval,
+        &mut args.normalize_cpu,
+        config,
+        CliSortBy::Io,
+    )?;
+    if !args.include_idle
+        && let Some(include_idle) = config.include_idle
+    {
+        args.include_idle = include_idle;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_common_config(
+    filters: &mut FilterArgs,
+    profile: &mut Option<CliProfile>,
+    group: &mut CliGroupBy,
+    sort: &mut CliSortBy,
+    limit: &mut usize,
+    interval: &mut Duration,
+    normalize_cpu: &mut bool,
+    config: &CliConfig,
+    default_sort: CliSortBy,
+) -> AnyhowResult<()> {
+    if profile.is_none() {
+        *profile = config.profile;
+    }
+    if matches!(*group, CliGroupBy::Process)
+        && let Some(config_group) = config.group
+    {
+        *group = config_group;
+    }
+    if *sort == default_sort
+        && let Some(config_sort) = config.sort
+    {
+        *sort = config_sort;
+    }
+    if *limit == 20
+        && let Some(config_limit) = config.limit
+    {
+        *limit = parse_limit(&config_limit.to_string())?;
+    }
+    if *interval == Duration::from_secs(1)
+        && let Some(config_interval) = &config.interval
+    {
+        *interval = parse_duration_arg(config_interval)?;
+    }
+    if !*normalize_cpu && let Some(config_normalize_cpu) = config.normalize_cpu {
+        *normalize_cpu = config_normalize_cpu;
+    }
+    if !filters.show_command
+        && let Some(show_command) = config.show_command
+    {
+        filters.show_command = show_command;
+    }
+    if !filters.hide_self
+        && let Some(hide_self) = config.hide_self
+    {
+        filters.hide_self = hide_self;
+    }
+    Ok(())
+}
+
+impl CliProfile {
+    fn group(self) -> CliGroupBy {
+        match self {
+            CliProfile::Cpu | CliProfile::Memory | CliProfile::Io => CliGroupBy::Process,
+            CliProfile::Commands => CliGroupBy::Command,
+            CliProfile::Users => CliGroupBy::User,
+            CliProfile::Tree => CliGroupBy::Parent,
+        }
+    }
+
+    fn sort(self) -> CliSortBy {
+        match self {
+            CliProfile::Cpu | CliProfile::Commands | CliProfile::Tree => CliSortBy::Cpu,
+            CliProfile::Memory | CliProfile::Users => CliSortBy::Ram,
+            CliProfile::Io => CliSortBy::Io,
+        }
+    }
+
+    fn show_command(self) -> bool {
+        matches!(self, CliProfile::Commands)
     }
 }
 
@@ -410,11 +658,31 @@ impl SnapshotArgs {
     }
 
     pub fn needs_command(&self) -> bool {
-        self.filters.needs_command() || matches!(self.group, CliGroupBy::Command)
+        self.filters.needs_command()
+            || self.effective_show_command()
+            || matches!(self.effective_group(), GroupBy::Command)
     }
 
     pub fn needs_executable(&self) -> bool {
-        matches!(self.group, CliGroupBy::Executable)
+        self.filters.needs_executable() || matches!(self.effective_group(), GroupBy::Executable)
+    }
+
+    pub fn effective_group(&self) -> GroupBy {
+        self.profile
+            .map(CliProfile::group)
+            .unwrap_or(self.group)
+            .into()
+    }
+
+    pub fn effective_sort(&self) -> SortBy {
+        self.profile
+            .map(CliProfile::sort)
+            .unwrap_or(self.sort)
+            .into()
+    }
+
+    pub fn effective_show_command(&self) -> bool {
+        self.filters.show_command || self.profile.is_some_and(CliProfile::show_command)
     }
 }
 
@@ -424,11 +692,31 @@ impl LiveArgs {
     }
 
     pub fn needs_command(&self) -> bool {
-        self.filters.needs_command() || matches!(self.group, CliGroupBy::Command)
+        self.filters.needs_command()
+            || self.effective_show_command()
+            || matches!(self.effective_group(), GroupBy::Command)
     }
 
     pub fn needs_executable(&self) -> bool {
-        matches!(self.group, CliGroupBy::Executable)
+        self.filters.needs_executable() || matches!(self.effective_group(), GroupBy::Executable)
+    }
+
+    pub fn effective_group(&self) -> GroupBy {
+        self.profile
+            .map(CliProfile::group)
+            .unwrap_or(self.group)
+            .into()
+    }
+
+    pub fn effective_sort(&self) -> SortBy {
+        self.profile
+            .map(CliProfile::sort)
+            .unwrap_or(self.sort)
+            .into()
+    }
+
+    pub fn effective_show_command(&self) -> bool {
+        self.filters.show_command || self.profile.is_some_and(CliProfile::show_command)
     }
 }
 
@@ -442,10 +730,30 @@ impl RecordArgs {
     }
 
     pub fn needs_command(&self) -> bool {
-        self.filters.needs_command() || matches!(self.group, CliGroupBy::Command)
+        self.filters.needs_command()
+            || self.effective_show_command()
+            || matches!(self.effective_group(), GroupBy::Command)
     }
 
     pub fn needs_executable(&self) -> bool {
-        matches!(self.group, CliGroupBy::Executable)
+        self.filters.needs_executable() || matches!(self.effective_group(), GroupBy::Executable)
+    }
+
+    pub fn effective_group(&self) -> GroupBy {
+        self.profile
+            .map(CliProfile::group)
+            .unwrap_or(self.group)
+            .into()
+    }
+
+    pub fn effective_sort(&self) -> SortBy {
+        self.profile
+            .map(CliProfile::sort)
+            .unwrap_or(self.sort)
+            .into()
+    }
+
+    pub fn effective_show_command(&self) -> bool {
+        self.filters.show_command || self.profile.is_some_and(CliProfile::show_command)
     }
 }

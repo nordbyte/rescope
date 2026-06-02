@@ -2,12 +2,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "docs:prepare": "npm install --prefix docs --no-audit --no-fund",
+    "docs:prepare": "node scripts/ensure-docs-deps.mjs",
     "docs:check": "node scripts/check-docs.mjs",
     "docs:dev": "npm run docs:prepare && npm --prefix docs run dev -- --host 0.0.0.0",
     "docs:build": "npm run docs:prepare && npm --prefix docs run build",
     "docs:preview": "npm run docs:prepare && npm --prefix docs run preview -- --host 0.0.0.0",
     "docs:verify": "npm run docs:check && npm run docs:build",
+    "npm:test": "npm --prefix npm/rescope test",
     "npm:smoke": "npm --prefix npm/rescope run smoke"
   }
 }

@@ -12,11 +12,14 @@ Lookup order:
 4. local `../../target/release/rescope`
 5. local `../../target/debug/rescope`
 
+Native package metadata is scaffolded in `npm/native` for the supported Linux, macOS and Windows targets. Those packages are intended for platform-specific binary publishing.
+
 For local development, build the binary first:
 
 ```bash
 cargo build -p rescope-cli
 node bin/rescope.js --help
+npm test
 ```
 
 Example:

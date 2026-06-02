@@ -12,12 +12,15 @@ rescope snapshot [OPTIONS]
 rescope snapshot --limit 20
 rescope snapshot --group user --sort ram --limit 10
 rescope snapshot --group executable --sort io --all
+rescope snapshot --profile tree --parent-name systemd
+rescope snapshot --exe /usr/bin --profile io
 rescope snapshot --json snapshot.json
 ```
 
 ## Options
 
 Common filters, grouping and sort options are documented in [CLI options](../reference/options.md).
+Profiles and JSON config defaults are also documented there.
 
 Snapshot-specific options:
 

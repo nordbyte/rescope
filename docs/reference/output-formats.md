@@ -13,13 +13,14 @@ JSON exports include:
 - filters
 - grouped rows
 - notes
-- timeline arrays for recording rows
+- bounded timeline arrays for recording rows
+- recording percentile and lifecycle count fields
 
 Times are serialized as Unix milliseconds.
 
 ## CSV
 
-CSV exports contain the visible aggregate rows without terminal sparklines. CPU raw and normalized columns are both included.
+CSV exports contain the visible aggregate rows without terminal sparklines. CPU raw and normalized columns are both included. Recording CSV also includes CPU p95/p99, RAM p95, I/O p95, `started_count` and `exited_count`.
 
 ## Stdout
 

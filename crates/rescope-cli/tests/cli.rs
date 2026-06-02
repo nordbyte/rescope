@@ -141,6 +141,49 @@ fn snapshot_supports_new_groups_all_and_normalized_cpu() {
 }
 
 #[test]
+fn snapshot_profile_tree_uses_parent_grouping() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args(["snapshot", "--profile", "tree", "--limit", "5"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PARENT"));
+}
+
+#[test]
+fn snapshot_accepts_executable_and_parent_filters() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "snapshot",
+            "--exe",
+            "rescope",
+            "--parent",
+            "1",
+            "--parent-name",
+            "system",
+            "--limit",
+            "1",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn config_file_applies_profile_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("rescope.json");
+    std::fs::write(&config, r#"{"profile":"users","limit":5,"hide_self":true}"#).unwrap();
+
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args(["--config", config.to_str().unwrap(), "snapshot"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("USER"));
+}
+
+#[test]
 fn snapshot_accepts_regex_threshold_and_invert_filters() {
     Command::cargo_bin("rescope")
         .unwrap()
@@ -160,6 +203,27 @@ fn snapshot_accepts_regex_threshold_and_invert_filters() {
         ])
         .assert()
         .success();
+}
+
+#[test]
+fn record_csv_contains_percentile_and_lifecycle_columns() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "record",
+            "--duration",
+            "1s",
+            "--interval",
+            "1s",
+            "--csv",
+            "-",
+            "--limit",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("cpu_p95_percent"))
+        .stdout(predicate::str::contains("started_count"));
 }
 
 #[test]

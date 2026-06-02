@@ -14,6 +14,7 @@ pub fn run(cli: Cli) -> Result<()> {
         None => {
             let args = LiveArgs {
                 filters: Default::default(),
+                profile: None,
                 group: crate::args::CliGroupBy::Process,
                 sort: crate::args::CliSortBy::Cpu,
                 limit: 20,
@@ -26,5 +27,11 @@ pub fn run(cli: Cli) -> Result<()> {
             };
             live::run(&cli, &args)
         }
+    }
+}
+
+pub fn verbose(cli: &Cli, message: impl AsRef<str>) {
+    if cli.verbose > 0 && !cli.quiet {
+        eprintln!("rescope: {}", message.as_ref());
     }
 }

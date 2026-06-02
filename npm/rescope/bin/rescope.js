@@ -4,10 +4,7 @@ const fs = require("fs");
 const path = require("path");
 const child_process = require("child_process");
 
-function targetTriple() {
-  const platform = process.platform;
-  const arch = process.arch;
-
+function targetTriple(platform = process.platform, arch = process.arch) {
   if (platform === "linux" && arch === "x64") return "x86_64-unknown-linux-gnu";
   if (platform === "linux" && arch === "arm64") return "aarch64-unknown-linux-gnu";
   if (platform === "darwin" && arch === "x64") return "x86_64-apple-darwin";
@@ -17,14 +14,14 @@ function targetTriple() {
   throw new Error(`Unsupported platform/arch: ${platform}/${arch}`);
 }
 
-function candidatePaths() {
-  const triple = targetTriple();
-  const exe = process.platform === "win32" ? "rescope.exe" : "rescope";
+function candidatePaths(env = process.env, platform = process.platform, arch = process.arch) {
+  const triple = targetTriple(platform, arch);
+  const exe = platform === "win32" ? "rescope.exe" : "rescope";
   const here = path.resolve(__dirname, "..");
-  const optionalPackage = optionalPackageName();
+  const optionalPackage = optionalPackageName(platform, arch);
 
   return [
-    process.env.RESCOPE_BINARY,
+    env.RESCOPE_BINARY,
     optionalPackage && resolveOptionalPackageBinary(optionalPackage, exe),
     path.join(here, "vendor", triple, exe),
     path.resolve(here, "..", "..", "target", "release", exe),
@@ -32,10 +29,7 @@ function candidatePaths() {
   ].filter(Boolean);
 }
 
-function optionalPackageName() {
-  const platform = process.platform;
-  const arch = process.arch;
-
+function optionalPackageName(platform = process.platform, arch = process.arch) {
   if (platform === "linux" && arch === "x64") return "@rescope/rescope-linux-x64";
   if (platform === "linux" && arch === "arm64") return "@rescope/rescope-linux-arm64";
   if (platform === "darwin" && arch === "x64") return "@rescope/rescope-darwin-x64";
@@ -54,35 +48,47 @@ function resolveOptionalPackageBinary(packageName, exe) {
   }
 }
 
-let candidates;
-try {
-  candidates = candidatePaths();
-} catch (error) {
-  console.error(error.message);
-  process.exit(1);
-}
-
-const binary = candidates.find((candidate) => fs.existsSync(candidate));
-
-if (!binary) {
-  console.error("rescope native binary not found.");
-  console.error(
-    "Build it with `cargo build -p rescope-cli --release` or install a published npm package that includes the native binary."
-  );
-  console.error("Checked:");
-  for (const candidate of candidates) {
-    console.error(`- ${candidate}`);
+function main() {
+  let candidates;
+  try {
+    candidates = candidatePaths();
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
   }
-  process.exit(1);
+
+  const binary = candidates.find((candidate) => fs.existsSync(candidate));
+
+  if (!binary) {
+    console.error("rescope native binary not found.");
+    console.error(
+      "Build it with `cargo build -p rescope-cli --release` or install a published npm package that includes the native binary."
+    );
+    console.error("Checked:");
+    for (const candidate of candidates) {
+      console.error(`- ${candidate}`);
+    }
+    process.exit(1);
+  }
+
+  const result = child_process.spawnSync(binary, process.argv.slice(2), {
+    stdio: "inherit"
+  });
+
+  if (result.error) {
+    console.error(result.error.message);
+    process.exit(1);
+  }
+
+  process.exit(result.status === null ? 1 : result.status);
 }
 
-const result = child_process.spawnSync(binary, process.argv.slice(2), {
-  stdio: "inherit"
-});
-
-if (result.error) {
-  console.error(result.error.message);
-  process.exit(1);
+if (require.main === module) {
+  main();
 }
 
-process.exit(result.status === null ? 1 : result.status);
+module.exports = {
+  candidatePaths,
+  optionalPackageName,
+  targetTriple
+};

@@ -7,7 +7,8 @@
 - `--json <PATH>` writes JSON. Use `-` for stdout.
 - `--csv <PATH>` writes CSV. Use `-` for stdout.
 - `--bytes` prints byte counts instead of human-readable units.
-- `-v`, `--verbose` reserved for additional diagnostics.
+- `-v`, `--verbose` prints sampler configuration, match counts and export diagnostics to stderr.
+- `--config <PATH>` loads default options from a JSON config file. CLI flags that use non-default values take practical precedence.
 - `-q`, `--quiet` suppresses terminal tables and status lines.
 
 ## Filters
@@ -18,6 +19,11 @@
 - `--name-regex <REGEX>`
 - `--cmd <SUBSTRING>`
 - `--cmd-regex <REGEX>`
+- `--exe <SUBSTRING>`
+- `--exe-regex <REGEX>`
+- `--parent <PID>`
+- `--parent-name <SUBSTRING>`
+- `--parent-regex <REGEX>`
 - `--min-cpu <PERCENT>`
 - `--min-ram <SIZE>`
 - `--min-io <SIZE>`
@@ -26,7 +32,23 @@
 - `--show-command`
 
 Size filters accept raw bytes or binary suffixes such as `512MiB`, `1GiB`, `64KiB` and `10M`.
-Regex filters are case-insensitive and are validated before sampling starts.
+Regex filters are case-insensitive and are validated before sampling starts. `--invert` only changes positive filters; with no positive filter it keeps all rows except `--hide-self`.
+
+## Profiles
+
+```text
+--profile <cpu|memory|io|commands|users|tree>
+```
+
+Profiles select practical defaults for group, sort and command display:
+
+- `--profile <PROFILE>` applies one of the available profiles.
+- `cpu` keeps process rows sorted by CPU.
+- `memory` keeps process rows sorted by RAM.
+- `io` keeps process rows sorted by combined read/write I/O.
+- `commands` groups by command line and enables command display.
+- `users` groups by user and sorts by RAM.
+- `tree` groups by parent process with parent PID and name.
 
 ## Grouping
 
@@ -34,7 +56,7 @@ Regex filters are case-insensitive and are validated before sampling starts.
 --group <process|name|user|command|executable|parent>
 ```
 
-- `--group <GROUP>` selects the aggregation key.
+- `--group <GROUP>` selects the aggregation key. Parent groups show the parent PID plus the parent process name when the platform reports it.
 
 ## Sorting
 
@@ -51,3 +73,20 @@ Regex filters are case-insensitive and are validated before sampling starts.
 ## Durations
 
 Durations accept `ms`, `s`, `m` and `h`, for example `250ms`, `30s`, `5m` or `1h`.
+
+## Config file
+
+The config file is JSON and supports global defaults plus common command defaults:
+
+```json
+{
+  "profile": "io",
+  "limit": 15,
+  "interval": "1s",
+  "normalize_cpu": true,
+  "hide_self": true,
+  "bytes": false
+}
+```
+
+Supported fields are `color`, `no_color`, `bytes`, `quiet`, `profile`, `group`, `sort`, `limit`, `interval`, `normalize_cpu`, `show_command`, `hide_self` and `include_idle`.

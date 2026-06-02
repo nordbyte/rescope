@@ -11,9 +11,10 @@ use crossterm::terminal::{
     enable_raw_mode, size as terminal_size,
 };
 use rescope_core::{
-    FilterSpec, GroupBy, RawProcessSample, RecordingReport, RecordingReportOptions, SampleSource,
-    SamplerConfig, SnapshotReport, SnapshotReportOptions, SnapshotRow, SortBy, SysinfoSampler,
-    SystemSample, build_recording_report, build_snapshot_report, filter_sample, format_bps,
+    FilterSpec, GroupBy, RawProcessSample, RecordingAccumulator, RecordingAccumulatorOptions,
+    RecordingReport, RecordingReportOptions, SampleSource, SamplerConfig, SnapshotReport,
+    SnapshotReportOptions, SnapshotRow, SortBy, SysinfoSampler, SystemSample,
+    build_recording_report_from_accumulator, build_snapshot_report, filter_sample, format_bps,
     format_bytes, system_time_ms,
 };
 
@@ -182,6 +183,7 @@ enum Overlay {
     },
     Detail {
         row: Box<SnapshotRow>,
+        follow: bool,
     },
     Search {
         input: String,
@@ -213,11 +215,12 @@ struct StatusMessage {
     expires_at_tick: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct RecordingSession {
     started_at: Instant,
     duration: Duration,
-    samples: Vec<SystemSample>,
+    accumulator: RecordingAccumulator,
+    last_sample_timestamp: Option<std::time::SystemTime>,
     group_by: GroupBy,
     sort_by: SortBy,
     filter: FilterSpec,
@@ -249,8 +252,8 @@ impl TuiApp {
     fn new(cli: &Cli, args: &LiveArgs) -> Self {
         Self {
             tick_count: 0,
-            group_by: args.group.into(),
-            sort_by: args.sort.into(),
+            group_by: args.effective_group(),
+            sort_by: args.effective_sort(),
             filter: args.filters.to_filter_spec(),
             search_query: String::new(),
             selected_row: 0,
@@ -258,7 +261,7 @@ impl TuiApp {
             interval: args.interval,
             normalize_cpu: args.normalize_cpu,
             raw_bytes: cli.bytes,
-            show_command: args.filters.show_command,
+            show_command: args.effective_show_command(),
             columns: SnapshotColumns::default(),
             paused: false,
             overlay: Overlay::None,
@@ -306,6 +309,8 @@ impl TuiApp {
                 || !self.search_query.is_empty()
                 || recording_needs_command,
             include_executable: self.group_by == GroupBy::Executable
+                || !self.filter.executable_substrings.is_empty()
+                || !self.filter.executable_regexes.is_empty()
                 || !self.search_query.is_empty()
                 || recording_needs_executable,
         }
@@ -352,7 +357,10 @@ impl TuiApp {
             self.set_status("no selected row");
             return;
         };
-        self.overlay = Overlay::Detail { row: Box::new(row) };
+        self.overlay = Overlay::Detail {
+            row: Box::new(row),
+            follow: false,
+        };
     }
 
     fn close_overlay(&mut self) {
@@ -361,6 +369,15 @@ impl TuiApp {
 
     fn set_report(&mut self, report: SnapshotReport) {
         self.selected_row = clamp_selected_row(self.selected_row, report.rows.len());
+        if let Overlay::Detail { row, follow: true } = &mut self.overlay
+            && let Some(updated) = report
+                .rows
+                .iter()
+                .find(|candidate| candidate.key == row.key)
+                .cloned()
+        {
+            **row = updated;
+        }
         self.last_report = Some(report);
     }
 
@@ -494,7 +511,6 @@ impl TuiApp {
         self.recording = Some(RecordingSession {
             started_at: Instant::now(),
             duration: self.record_duration,
-            samples: Vec::new(),
             group_by: self.group_by,
             sort_by: self.sort_by,
             filter: self.filter.clone(),
@@ -502,6 +518,14 @@ impl TuiApp {
             limit: self.limit,
             include_idle: self.recording_include_idle,
             normalize_cpu: self.normalize_cpu,
+            accumulator: RecordingAccumulator::new(RecordingAccumulatorOptions {
+                group_by: self.group_by,
+                sort_by: self.sort_by,
+                interval: self.interval,
+                show_command: self.show_command,
+                include_idle: self.recording_include_idle,
+            }),
+            last_sample_timestamp: None,
         });
         self.set_status(format!(
             "recording started for {}",
@@ -521,12 +545,10 @@ impl TuiApp {
         let Some(recording) = self.recording.as_mut() else {
             return;
         };
-        let is_duplicate = recording
-            .samples
-            .last()
-            .is_some_and(|last| last.timestamp == sample.timestamp);
+        let is_duplicate = recording.last_sample_timestamp == Some(sample.timestamp);
         if !is_duplicate {
-            recording.samples.push(sample.clone());
+            recording.accumulator.push_sample(sample);
+            recording.last_sample_timestamp = Some(sample.timestamp);
         }
         if recording.started_at.elapsed() >= recording.duration
             && let Some(recording) = self.recording.take()
@@ -536,24 +558,31 @@ impl TuiApp {
     }
 
     fn finish_recording(&mut self, recording: RecordingSession) {
-        if recording.samples.is_empty() {
+        if recording.accumulator.is_empty() {
             self.set_status("recording stopped without samples");
             return;
         }
 
         let elapsed = recording.started_at.elapsed().max(self.interval);
-        let report = build_recording_report(
-            &recording.samples,
+        let group_by = recording.group_by;
+        let sort_by = recording.sort_by;
+        let filter = recording.filter;
+        let show_command = recording.show_command;
+        let limit = recording.limit;
+        let include_idle = recording.include_idle;
+        let normalize_cpu = recording.normalize_cpu;
+        let report = build_recording_report_from_accumulator(
+            recording.accumulator,
             RecordingReportOptions {
                 requested_duration: elapsed,
                 interval: self.interval,
-                group_by: recording.group_by,
-                sort_by: recording.sort_by,
-                filters: recording.filter,
-                show_command: recording.show_command,
-                limit: recording.limit,
-                include_idle: recording.include_idle,
-                normalize_cpu: recording.normalize_cpu,
+                group_by,
+                sort_by,
+                filters: filter,
+                show_command,
+                limit,
+                include_idle,
+                normalize_cpu,
             },
         );
         let sample_count = report.sample_count;
@@ -623,8 +652,7 @@ pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
     loop {
         let desired_config = app.sampler_config();
         if desired_config != sampler_config {
-            sampler = SysinfoSampler::new(desired_config)?;
-            sampler.warm_up(app.interval)?;
+            sampler.set_config(desired_config);
             sampler_config = desired_config;
             cached_sample = None;
             app.set_status("sampler details updated");
@@ -715,7 +743,11 @@ fn wait_for_input_until(deadline: Instant, app: &mut TuiApp) -> Result<TuiInput>
 
 fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> TuiInput {
     let ctrl_c = code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL);
-    if ctrl_c || is_quit_key(code) {
+    let text_input_open = matches!(
+        app.overlay,
+        Overlay::Search { .. } | Overlay::ExportPath { .. }
+    );
+    if ctrl_c || (!text_input_open && is_quit_key(code)) {
         return TuiInput::Quit;
     }
 
@@ -727,7 +759,8 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> TuiIn
             format,
             input,
         } => handle_export_path_key(app, code, modifiers, target, format, input),
-        Overlay::Help | Overlay::Detail { .. } => handle_simple_overlay_key(app, code),
+        Overlay::Help => handle_simple_overlay_key(app, code),
+        Overlay::Detail { .. } => handle_detail_overlay_key(app, code),
         Overlay::Options { .. }
         | Overlay::Sort { .. }
         | Overlay::Group { .. }
@@ -850,6 +883,31 @@ fn handle_simple_overlay_key(app: &mut TuiApp, code: KeyCode) -> TuiInput {
     match code {
         KeyCode::Esc | KeyCode::Enter => {
             app.close_overlay();
+            TuiInput::RefreshNow
+        }
+        _ => TuiInput::Tick,
+    }
+}
+
+fn handle_detail_overlay_key(app: &mut TuiApp, code: KeyCode) -> TuiInput {
+    match code {
+        KeyCode::Esc | KeyCode::Enter => {
+            app.close_overlay();
+            TuiInput::RefreshNow
+        }
+        KeyCode::Char('f') | KeyCode::Char('F') => {
+            let mut follows = None;
+            if let Overlay::Detail { follow, .. } = &mut app.overlay {
+                *follow = !*follow;
+                follows = Some(*follow);
+            }
+            if let Some(follow) = follows {
+                app.set_status(if follow {
+                    "detail follows selected process"
+                } else {
+                    "detail frozen"
+                });
+            }
             TuiInput::RefreshNow
         }
         _ => TuiInput::Tick,
@@ -1117,7 +1175,7 @@ fn format_overlay(app: &TuiApp, color: bool) -> String {
             format,
             input,
         } => format_export_path(*target, *format, input, color),
-        Overlay::Detail { row } => format_detail(app, row, color),
+        Overlay::Detail { row, follow } => format_detail(app, row, *follow, color),
         Overlay::Search { input } => format!(
             "{}\n{} {input}\n\nEnter apply | Esc cancel\n\n",
             section_title("Search", color),
@@ -1310,6 +1368,7 @@ fn format_help(color: bool) -> String {
         "o options menu".to_string(),
         "s sort menu | g group menu | f filters | v view | r recording | e export".to_string(),
         "/ search | up/down select row | PgUp/PgDn page | Enter details".to_string(),
+        "details: f toggle frozen/follow mode".to_string(),
         "space pause/resume | +/- row limit | [/] refresh interval".to_string(),
         "n normalized CPU | b raw bytes | c command display".to_string(),
         "Esc close overlay or quit main view | q quit".to_string(),
@@ -1318,12 +1377,19 @@ fn format_help(color: bool) -> String {
     lines.join("\n")
 }
 
-fn format_detail(app: &TuiApp, row: &SnapshotRow, color: bool) -> String {
+fn format_detail(app: &TuiApp, row: &SnapshotRow, follow: bool, color: bool) -> String {
     let mut output = String::new();
     writeln!(&mut output, "{}", section_title("Details", color))
         .expect("writing to a string cannot fail");
     writeln!(&mut output, "{} {}", label("name", color), row.display_name)
         .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} {}",
+        label("mode", color),
+        if follow { "follow" } else { "frozen" }
+    )
+    .expect("writing to a string cannot fail");
     if let Some(pid) = row.pid {
         writeln!(&mut output, "{} {pid}", label("pid", color))
             .expect("writing to a string cannot fail");
@@ -1367,7 +1433,11 @@ fn format_detail(app: &TuiApp, row: &SnapshotRow, color: bool) -> String {
     writeln!(
         &mut output,
         "\n{}\n",
-        paint("Esc close | q quit", TuiStyle::Muted, color)
+        paint(
+            "f follow/freeze | Esc close | q quit",
+            TuiStyle::Muted,
+            color
+        )
     )
     .expect("writing to a string cannot fail");
     output
@@ -1620,6 +1690,15 @@ fn filter_summary(app: &TuiApp) -> String {
     if !app.filter.command_substrings.is_empty() || !app.filter.command_regexes.is_empty() {
         active.push("cmd");
     }
+    if !app.filter.executable_substrings.is_empty() || !app.filter.executable_regexes.is_empty() {
+        active.push("exe");
+    }
+    if !app.filter.parent_pids.is_empty()
+        || !app.filter.parent_names.is_empty()
+        || !app.filter.parent_regexes.is_empty()
+    {
+        active.push("parent");
+    }
     if app.filter.min_cpu_percent.is_some()
         || app.filter.min_ram_bytes.is_some()
         || app.filter.min_io_delta_bytes.is_some()
@@ -1801,6 +1880,37 @@ mod tests {
     }
 
     #[test]
+    fn q_is_text_inside_search_overlay() {
+        let mut app = app();
+        app.open_search();
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Char('q'), KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
+        assert!(matches!(app.overlay, Overlay::Search { .. }));
+
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
+        assert_eq!(app.search_query, "q");
+    }
+
+    #[test]
+    fn q_is_text_inside_export_path_overlay() {
+        let mut app = app();
+        app.overlay = Overlay::ExportPath {
+            target: ExportTarget::Snapshot,
+            format: ExportFormat::Json,
+            input: String::new(),
+        };
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Char('q'), KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
+        assert!(matches!(app.overlay, Overlay::ExportPath { .. }));
+    }
+
+    #[test]
     fn escape_quits_main_but_closes_overlay() {
         let mut app = app();
         assert_eq!(
@@ -1906,6 +2016,20 @@ mod tests {
     }
 
     #[test]
+    fn detail_overlay_can_toggle_follow_mode() {
+        let mut app = app();
+        app.last_report = Some(report_with_processes(&["alpha"]));
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Char('f'), KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
+        let detail = format_overlay(&app, false);
+        assert!(detail.contains("mode follow"));
+    }
+
+    #[test]
     fn render_app_uses_ansi_colors_when_enabled() {
         let mut app = app();
         let report = report_with_processes(&["alpha"]);
@@ -1937,6 +2061,7 @@ mod tests {
                     user_id: Some("1000".to_string()),
                     user_name: Some("alice".to_string()),
                     parent_pid: Some(1),
+                    parent_name: Some("init".to_string()),
                     executable: Some(format!("/usr/bin/{name}")),
                     command: Some(format!("/usr/bin/{name}")),
                     memory_bytes: 64,
