@@ -1,5 +1,6 @@
 use comfy_table::{Cell, Color, ContentArrangement, Table, presets::NOTHING};
 use std::cmp::Reverse;
+use std::fmt::Write as _;
 
 use rescope_core::{
     AggregateRow, GroupBy, RecordingReport, SnapshotReport, format_bps, format_bytes,
@@ -17,24 +18,37 @@ const PARENT_DISPLAY_MAX_CHARS: usize = 48;
 const TIMELINE_DISPLAY_MAX_CHARS: usize = 20;
 
 pub fn print_snapshot(report: &SnapshotReport, raw_bytes: bool, show_system: bool, color: bool) {
+    print!("{}", render_snapshot(report, raw_bytes, show_system, color));
+}
+
+pub fn render_snapshot(
+    report: &SnapshotReport,
+    raw_bytes: bool,
+    show_system: bool,
+    color: bool,
+) -> String {
+    let mut output = String::new();
+
     if show_system {
         let used = report
             .total_memory_bytes
             .saturating_sub(report.available_memory_bytes);
-        println!(
+        writeln!(
+            &mut output,
             "System: CPU {:.1}% | RAM {} / {} | processes {} | interval {}",
             report.global_cpu_percent,
             format_bytes(used, raw_bytes),
             format_bytes(report.total_memory_bytes, raw_bytes),
             report.process_total,
             humantime::format_duration(report.interval)
-        );
-        println!();
+        )
+        .expect("writing to a string cannot fail");
+        output.push('\n');
     }
 
     if report.rows.is_empty() {
-        println!("no matching processes");
-        return;
+        output.push_str("no matching processes\n");
+        return output;
     }
 
     let mut table = plain_table();
@@ -139,7 +153,8 @@ pub fn print_snapshot(report: &SnapshotReport, raw_bytes: bool, show_system: boo
             }
         }
     }
-    println!("{table}");
+    writeln!(&mut output, "{table}").expect("writing to a string cannot fail");
+    output
 }
 
 pub fn print_recording(

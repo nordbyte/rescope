@@ -20,6 +20,12 @@ use crate::tui::view;
 pub struct TuiApp {
     tick_count: u64,
     sort_by: SortBy,
+    sort_picker: Option<SortPicker>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SortPicker {
+    selected_index: usize,
 }
 
 impl TuiApp {
@@ -27,16 +33,45 @@ impl TuiApp {
         Self {
             tick_count: 0,
             sort_by,
+            sort_picker: None,
         }
     }
 
-    fn set_sort(&mut self, sort_by: SortBy) -> bool {
-        if self.sort_by == sort_by {
-            false
-        } else {
-            self.sort_by = sort_by;
-            true
+    fn open_sort_picker(&mut self) {
+        self.sort_picker = Some(SortPicker {
+            selected_index: sort_index(self.sort_by),
+        });
+    }
+
+    fn close_sort_picker(&mut self) {
+        self.sort_picker = None;
+    }
+
+    fn move_sort_picker(&mut self, direction: PickerDirection) {
+        if let Some(picker) = &mut self.sort_picker {
+            let len = view::SORT_OPTIONS.len();
+            picker.selected_index = match direction {
+                PickerDirection::Previous => {
+                    if picker.selected_index == 0 {
+                        len - 1
+                    } else {
+                        picker.selected_index - 1
+                    }
+                }
+                PickerDirection::Next => (picker.selected_index + 1) % len,
+            };
         }
+    }
+
+    fn apply_sort_picker(&mut self) {
+        if let Some(picker) = self.sort_picker {
+            self.sort_by = view::SORT_OPTIONS[picker.selected_index];
+            self.sort_picker = None;
+        }
+    }
+
+    fn sort_picker_selected_index(&self) -> Option<usize> {
+        self.sort_picker.map(|picker| picker.selected_index)
     }
 }
 
@@ -73,9 +108,19 @@ pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
             Clear(ClearType::All),
             crossterm::cursor::MoveTo(0, 0)
         )?;
-        view::render_header(&report, cli.bytes, app.tick_count);
-        table::print_snapshot(&report, cli.bytes, false, cli.color_enabled());
-        view::render_footer();
+        let mut output = String::new();
+        output.push_str(&view::format_header(&report, cli.bytes, app.tick_count));
+        output.push_str(&table::render_snapshot(
+            &report,
+            cli.bytes,
+            false,
+            cli.color_enabled(),
+        ));
+        if let Some(selected_index) = app.sort_picker_selected_index() {
+            output.push_str(&view::format_sort_picker(selected_index, app.sort_by));
+        }
+        output.push_str(&view::format_footer(app.sort_picker.is_some()));
+        write_tui_text(&output)?;
         io::stdout().flush()?;
 
         let next_tick = Instant::now() + args.interval;
@@ -102,6 +147,12 @@ enum TuiInput {
     Quit,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerDirection {
+    Previous,
+    Next,
+}
+
 fn wait_for_input_until(deadline: Instant, app: &mut TuiApp) -> Result<TuiInput> {
     loop {
         let now = Instant::now();
@@ -113,43 +164,71 @@ fn wait_for_input_until(deadline: Instant, app: &mut TuiApp) -> Result<TuiInput>
             && let Event::Key(key) = event::read()?
             && key.kind == KeyEventKind::Press
         {
-            let quit_key = matches!(
-                key.code,
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('Q')
-            );
-            let ctrl_c =
-                key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
-            if quit_key || ctrl_c {
-                return Ok(TuiInput::Quit);
-            }
-
-            let sort_modifier = key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT;
-            if sort_modifier
-                && let Some(sort_by) = sort_for_key(key.code)
-                && app.set_sort(sort_by)
-            {
-                return Ok(TuiInput::RefreshNow);
-            }
+            return Ok(handle_key(app, key.code, key.modifiers));
         }
     }
 }
 
-fn sort_for_key(code: KeyCode) -> Option<SortBy> {
-    let KeyCode::Char(ch) = code else {
-        return None;
-    };
-
-    match ch.to_ascii_lowercase() {
-        'c' => Some(SortBy::Cpu),
-        'm' => Some(SortBy::Ram),
-        'i' => Some(SortBy::Io),
-        'r' => Some(SortBy::Read),
-        'w' => Some(SortBy::Write),
-        'p' => Some(SortBy::Pid),
-        'n' => Some(SortBy::Name),
-        'u' => Some(SortBy::User),
-        _ => None,
+fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> TuiInput {
+    let ctrl_c = code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL);
+    let sort_picker_open = app.sort_picker.is_some();
+    if ctrl_c || is_quit_key(code) || (!sort_picker_open && code == KeyCode::Esc) {
+        return TuiInput::Quit;
     }
+
+    if sort_picker_open {
+        return handle_sort_picker_key(app, code);
+    }
+
+    let sort_modifier = modifiers.is_empty() || modifiers == KeyModifiers::SHIFT;
+    if sort_modifier && matches_sort_key(code) {
+        app.open_sort_picker();
+        return TuiInput::RefreshNow;
+    }
+
+    TuiInput::Tick
+}
+
+fn handle_sort_picker_key(app: &mut TuiApp, code: KeyCode) -> TuiInput {
+    match code {
+        KeyCode::Up => {
+            app.move_sort_picker(PickerDirection::Previous);
+            TuiInput::RefreshNow
+        }
+        KeyCode::Down => {
+            app.move_sort_picker(PickerDirection::Next);
+            TuiInput::RefreshNow
+        }
+        KeyCode::Enter => {
+            app.apply_sort_picker();
+            TuiInput::RefreshNow
+        }
+        KeyCode::Esc => {
+            app.close_sort_picker();
+            TuiInput::RefreshNow
+        }
+        _ => TuiInput::Tick,
+    }
+}
+
+fn is_quit_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Char('q') | KeyCode::Char('Q'))
+}
+
+fn matches_sort_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Char('s') | KeyCode::Char('S'))
+}
+
+fn sort_index(sort_by: SortBy) -> usize {
+    view::SORT_OPTIONS
+        .iter()
+        .position(|option| *option == sort_by)
+        .unwrap_or(0)
+}
+
+fn write_tui_text(output: &str) -> io::Result<()> {
+    let output = output.replace('\n', "\r\n");
+    io::stdout().write_all(output.as_bytes())
 }
 
 struct TerminalGuard;
@@ -166,23 +245,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn maps_sort_hotkeys() {
-        assert_eq!(sort_for_key(KeyCode::Char('c')), Some(SortBy::Cpu));
-        assert_eq!(sort_for_key(KeyCode::Char('M')), Some(SortBy::Ram));
-        assert_eq!(sort_for_key(KeyCode::Char('i')), Some(SortBy::Io));
-        assert_eq!(sort_for_key(KeyCode::Char('r')), Some(SortBy::Read));
-        assert_eq!(sort_for_key(KeyCode::Char('w')), Some(SortBy::Write));
-        assert_eq!(sort_for_key(KeyCode::Char('p')), Some(SortBy::Pid));
-        assert_eq!(sort_for_key(KeyCode::Char('n')), Some(SortBy::Name));
-        assert_eq!(sort_for_key(KeyCode::Char('u')), Some(SortBy::User));
-        assert_eq!(sort_for_key(KeyCode::Char('x')), None);
+    fn opens_sort_picker_with_s_only() {
+        let mut app = TuiApp::new(SortBy::Cpu);
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Char('c'), KeyModifiers::empty()),
+            TuiInput::Tick
+        );
+        assert!(app.sort_picker.is_none());
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Char('s'), KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
+        assert_eq!(app.sort_picker_selected_index(), Some(0));
     }
 
     #[test]
-    fn sort_state_only_changes_for_new_sort() {
+    fn sort_picker_moves_and_applies_selection() {
         let mut app = TuiApp::new(SortBy::Cpu);
-        assert!(!app.set_sort(SortBy::Cpu));
-        assert!(app.set_sort(SortBy::Ram));
+        app.open_sort_picker();
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Down, KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
+        assert_eq!(app.sort_picker_selected_index(), Some(1));
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
         assert_eq!(app.sort_by, SortBy::Ram);
+        assert!(app.sort_picker.is_none());
+    }
+
+    #[test]
+    fn sort_picker_escape_closes_without_quitting() {
+        let mut app = TuiApp::new(SortBy::Cpu);
+        app.open_sort_picker();
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Esc, KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
+        assert!(app.sort_picker.is_none());
+    }
+
+    #[test]
+    fn escape_quits_when_sort_picker_is_closed() {
+        let mut app = TuiApp::new(SortBy::Cpu);
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Esc, KeyModifiers::empty()),
+            TuiInput::Quit
+        );
     }
 }
