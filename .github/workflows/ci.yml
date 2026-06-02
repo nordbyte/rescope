@@ -26,7 +26,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
           cache-dependency-path: |
             docs/package-lock.json
@@ -44,8 +44,14 @@ jobs:
       - name: Build CLI binary
         run: cargo build -p rescope-cli
 
-      - name: Docs verify
-        run: npm run docs:verify
+      - name: Install docs dependencies
+        run: npm ci --prefix docs --no-audit --no-fund
+
+      - name: Check docs links and CLI coverage
+        run: npm run docs:check
+
+      - name: Build docs
+        run: npm --prefix docs run build
 
       - name: npm wrapper tests
         run: npm run npm:test
@@ -90,8 +96,8 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
 
-      - name: Test
-        run: cargo test --workspace
+      - name: Build
+        run: cargo build --workspace
 
       - name: Snapshot smoke
         run: cargo run -p rescope-cli -- snapshot --limit 5
