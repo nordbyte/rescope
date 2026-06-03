@@ -142,6 +142,7 @@ pub struct CliConfig {
     pub interval: Option<String>,
     pub normalize_cpu: Option<bool>,
     pub show_command: Option<bool>,
+    pub show_path: Option<bool>,
     pub hide_self: Option<bool>,
     pub include_idle: Option<bool>,
 }
@@ -300,6 +301,9 @@ pub struct FilterArgs {
     #[arg(long = "user", action = ArgAction::Append, help = "Only include a user name or user id; repeat for multiple users")]
     pub users: Vec<String>,
 
+    #[arg(long = "process", action = ArgAction::Append, help = "Flexible process search across PID, name, executable path and command line; repeat for alternatives")]
+    pub process_substrings: Vec<String>,
+
     #[arg(long = "name", action = ArgAction::Append, help = "Only include process names containing this text; repeat for alternatives")]
     pub names: Vec<String>,
 
@@ -312,7 +316,7 @@ pub struct FilterArgs {
     #[arg(long = "cmd-regex", action = ArgAction::Append, value_parser = parse_regex_arg, help = "Only include command lines matching this case-insensitive regex")]
     pub command_regexes: Vec<String>,
 
-    #[arg(long = "exe", action = ArgAction::Append, help = "Only include executable paths containing this text; repeat for alternatives")]
+    #[arg(long = "exe", alias = "path", action = ArgAction::Append, help = "Only include executable paths containing this text; repeat for alternatives")]
     pub executable_substrings: Vec<String>,
 
     #[arg(long = "exe-regex", action = ArgAction::Append, value_parser = parse_regex_arg, help = "Only include executable paths matching this case-insensitive regex")]
@@ -344,6 +348,9 @@ pub struct FilterArgs {
 
     #[arg(long, help = "Display full command lines where available")]
     pub show_command: bool,
+
+    #[arg(long, help = "Display full executable paths where available")]
+    pub show_path: bool,
 }
 
 impl FilterArgs {
@@ -351,6 +358,7 @@ impl FilterArgs {
         FilterSpec {
             pids: self.pids.clone(),
             users: self.users.clone(),
+            process_substrings: self.process_substrings.clone(),
             names: self.names.clone(),
             name_regexes: self.name_regexes.clone(),
             command_substrings: self.command_substrings.clone(),
@@ -369,11 +377,17 @@ impl FilterArgs {
     }
 
     pub fn needs_command(&self) -> bool {
-        self.show_command || !self.command_substrings.is_empty() || !self.command_regexes.is_empty()
+        self.show_command
+            || !self.process_substrings.is_empty()
+            || !self.command_substrings.is_empty()
+            || !self.command_regexes.is_empty()
     }
 
     pub fn needs_executable(&self) -> bool {
-        !self.executable_substrings.is_empty() || !self.executable_regexes.is_empty()
+        self.show_path
+            || !self.process_substrings.is_empty()
+            || !self.executable_substrings.is_empty()
+            || !self.executable_regexes.is_empty()
     }
 }
 
@@ -539,6 +553,11 @@ fn apply_common_config(
     {
         filters.show_command = show_command;
     }
+    if !filters.show_path
+        && let Some(show_path) = config.show_path
+    {
+        filters.show_path = show_path;
+    }
     if !filters.hide_self
         && let Some(hide_self) = config.hide_self
     {
@@ -664,7 +683,9 @@ impl SnapshotArgs {
     }
 
     pub fn needs_executable(&self) -> bool {
-        self.filters.needs_executable() || matches!(self.effective_group(), GroupBy::Executable)
+        self.filters.needs_executable()
+            || self.effective_show_path()
+            || matches!(self.effective_group(), GroupBy::Executable)
     }
 
     pub fn effective_group(&self) -> GroupBy {
@@ -683,6 +704,10 @@ impl SnapshotArgs {
 
     pub fn effective_show_command(&self) -> bool {
         self.filters.show_command || self.profile.is_some_and(CliProfile::show_command)
+    }
+
+    pub fn effective_show_path(&self) -> bool {
+        self.filters.show_path
     }
 }
 
@@ -698,7 +723,9 @@ impl LiveArgs {
     }
 
     pub fn needs_executable(&self) -> bool {
-        self.filters.needs_executable() || matches!(self.effective_group(), GroupBy::Executable)
+        self.filters.needs_executable()
+            || self.effective_show_path()
+            || matches!(self.effective_group(), GroupBy::Executable)
     }
 
     pub fn effective_group(&self) -> GroupBy {
@@ -717,6 +744,10 @@ impl LiveArgs {
 
     pub fn effective_show_command(&self) -> bool {
         self.filters.show_command || self.profile.is_some_and(CliProfile::show_command)
+    }
+
+    pub fn effective_show_path(&self) -> bool {
+        self.filters.show_path
     }
 }
 
@@ -736,7 +767,9 @@ impl RecordArgs {
     }
 
     pub fn needs_executable(&self) -> bool {
-        self.filters.needs_executable() || matches!(self.effective_group(), GroupBy::Executable)
+        self.filters.needs_executable()
+            || self.effective_show_path()
+            || matches!(self.effective_group(), GroupBy::Executable)
     }
 
     pub fn effective_group(&self) -> GroupBy {
@@ -755,5 +788,9 @@ impl RecordArgs {
 
     pub fn effective_show_command(&self) -> bool {
         self.filters.show_command || self.profile.is_some_and(CliProfile::show_command)
+    }
+
+    pub fn effective_show_path(&self) -> bool {
+        self.filters.show_path
     }
 }

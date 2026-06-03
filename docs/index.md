@@ -10,7 +10,7 @@ Inspect and record resource usage by process and user.
 - Runs a live terminal view with plain refresh or interactive TUI mode.
 - Records a bounded time window and prints an aggregate report.
 - Groups by process, process name, user, command line, executable path or parent PID.
-- Filters by PID, user, process name and command substring.
+- Filters by PID, user, flexible process search, process name, command substring and executable path.
 - Exports JSON and CSV to files or stdout.
 
 ## Common commands

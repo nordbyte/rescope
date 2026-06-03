@@ -28,3 +28,5 @@ This prevents PID reuse from merging two different processes during a recording.
 ## Privacy
 
 Command lines can contain secrets. They are hidden by default. Use `--show-command` to display command lines in process rows, or `--group command` when command-line grouping is explicitly needed.
+
+Executable paths are hidden in process rows by default because they can reveal local user or project paths. Use `--show-path` to add a full `PATH` column, or `--group executable` when path grouping is explicitly needed.

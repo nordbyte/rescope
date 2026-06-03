@@ -55,10 +55,11 @@ const FILTER_ITEMS: [&str; 8] = [
     "Cycle min I/O",
     "Clear thresholds",
 ];
-const VIEW_ITEMS: [&str; 8] = [
+const VIEW_ITEMS: [&str; 9] = [
     "Toggle normalized CPU",
     "Toggle raw bytes",
     "Toggle command display",
+    "Toggle path display",
     "Toggle PID column",
     "Toggle user columns",
     "Toggle rate columns",
@@ -136,6 +137,7 @@ pub struct TuiApp {
     normalize_cpu: bool,
     raw_bytes: bool,
     show_command: bool,
+    show_path: bool,
     columns: SnapshotColumns,
     paused: bool,
     overlay: Overlay,
@@ -225,6 +227,7 @@ struct RecordingSession {
     sort_by: SortBy,
     filter: FilterSpec,
     show_command: bool,
+    show_path: bool,
     limit: usize,
     include_idle: bool,
     normalize_cpu: bool,
@@ -262,6 +265,7 @@ impl TuiApp {
             normalize_cpu: args.normalize_cpu,
             raw_bytes: cli.bytes,
             show_command: args.effective_show_command(),
+            show_path: args.effective_show_path(),
             columns: SnapshotColumns::default(),
             paused: false,
             overlay: Overlay::None,
@@ -309,8 +313,10 @@ impl TuiApp {
                 || !self.search_query.is_empty()
                 || recording_needs_command,
             include_executable: self.group_by == GroupBy::Executable
+                || self.show_path
                 || !self.filter.executable_substrings.is_empty()
                 || !self.filter.executable_regexes.is_empty()
+                || !self.filter.process_substrings.is_empty()
                 || !self.search_query.is_empty()
                 || recording_needs_executable,
         }
@@ -465,6 +471,11 @@ impl TuiApp {
         self.set_status(format!("command display {}", on_off(self.show_command)));
     }
 
+    fn toggle_show_path(&mut self) {
+        self.show_path = !self.show_path;
+        self.set_status(format!("path display {}", on_off(self.show_path)));
+    }
+
     fn toggle_recording_include_idle(&mut self) {
         self.recording_include_idle = !self.recording_include_idle;
         self.set_status(format!(
@@ -515,6 +526,7 @@ impl TuiApp {
             sort_by: self.sort_by,
             filter: self.filter.clone(),
             show_command: self.show_command,
+            show_path: self.show_path,
             limit: self.limit,
             include_idle: self.recording_include_idle,
             normalize_cpu: self.normalize_cpu,
@@ -523,6 +535,7 @@ impl TuiApp {
                 sort_by: self.sort_by,
                 interval: self.interval,
                 show_command: self.show_command,
+                show_path: self.show_path,
                 include_idle: self.recording_include_idle,
             }),
             last_sample_timestamp: None,
@@ -568,6 +581,7 @@ impl TuiApp {
         let sort_by = recording.sort_by;
         let filter = recording.filter;
         let show_command = recording.show_command;
+        let show_path = recording.show_path;
         let limit = recording.limit;
         let include_idle = recording.include_idle;
         let normalize_cpu = recording.normalize_cpu;
@@ -580,6 +594,7 @@ impl TuiApp {
                 sort_by,
                 filters: filter,
                 show_command,
+                show_path,
                 limit,
                 include_idle,
                 normalize_cpu,
@@ -673,6 +688,7 @@ pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
                 sort_by: app.sort_by,
                 filters: app.filter.clone(),
                 show_command: app.show_command,
+                show_path: app.show_path,
                 limit: app.limit,
                 normalize_cpu: app.normalize_cpu,
             },
@@ -798,6 +814,7 @@ fn handle_main_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> 
         KeyCode::Char('n') | KeyCode::Char('N') => app.toggle_normalized_cpu(),
         KeyCode::Char('b') | KeyCode::Char('B') => app.toggle_raw_bytes(),
         KeyCode::Char('c') | KeyCode::Char('C') => app.toggle_show_command(),
+        KeyCode::Char('x') | KeyCode::Char('X') => app.toggle_show_path(),
         KeyCode::Up => app.move_selected_row(PickerDirection::Previous),
         KeyCode::Down => app.move_selected_row(PickerDirection::Next),
         KeyCode::PageUp => app.move_selected_page(PickerDirection::Previous),
@@ -996,14 +1013,15 @@ fn apply_overlay_selection(app: &mut TuiApp) {
             0 => app.toggle_normalized_cpu(),
             1 => app.toggle_raw_bytes(),
             2 => app.toggle_show_command(),
-            3 => app.columns.pid = !app.columns.pid,
-            4 => {
+            3 => app.toggle_show_path(),
+            4 => app.columns.pid = !app.columns.pid,
+            5 => {
                 app.columns.user = !app.columns.user;
                 app.columns.users = !app.columns.users;
             }
-            5 => app.columns.rates = !app.columns.rates,
-            6 => app.columns.totals = !app.columns.totals,
-            7 => app.columns.top_process = !app.columns.top_process,
+            6 => app.columns.rates = !app.columns.rates,
+            7 => app.columns.totals = !app.columns.totals,
+            8 => app.columns.top_process = !app.columns.top_process,
             _ => {}
         },
         Overlay::Sampling { selected } => match selected {
@@ -1132,13 +1150,15 @@ fn format_state_line(app: &TuiApp, report: &SnapshotReport, color: bool) -> Stri
     .expect("writing to a string cannot fail");
     writeln!(
         &mut output,
-        "{} {} | {} {} | {} {} | {} {}",
+        "{} {} | {} {} | {} {} | {} {} | {} {}",
         label("normalized", color),
         on_off(app.normalize_cpu),
         label("bytes", color),
         on_off(app.raw_bytes),
         label("command", color),
         on_off(app.show_command),
+        label("path", color),
+        on_off(app.show_path),
         label("filters", color),
         filter_summary(app)
     )
@@ -1276,6 +1296,7 @@ fn format_view_menu(selected: usize, app: &TuiApp, color: bool) -> String {
         on_off(app.normalize_cpu).to_string(),
         on_off(app.raw_bytes).to_string(),
         on_off(app.show_command).to_string(),
+        on_off(app.show_path).to_string(),
         on_off(app.columns.pid).to_string(),
         if app.columns.user || app.columns.users {
             "on"
@@ -1370,7 +1391,7 @@ fn format_help(color: bool) -> String {
         "/ search | up/down select row | PgUp/PgDn page | Enter details".to_string(),
         "details: f toggle frozen/follow mode".to_string(),
         "space pause/resume | +/- row limit | [/] refresh interval".to_string(),
-        "n normalized CPU | b raw bytes | c command display".to_string(),
+        "n normalized CPU | b raw bytes | c command display | x path display".to_string(),
         "Esc close overlay or quit main view | q quit".to_string(),
         String::new(),
     ];
@@ -1392,6 +1413,10 @@ fn format_detail(app: &TuiApp, row: &SnapshotRow, follow: bool, color: bool) -> 
     .expect("writing to a string cannot fail");
     if let Some(pid) = row.pid {
         writeln!(&mut output, "{} {pid}", label("pid", color))
+            .expect("writing to a string cannot fail");
+    }
+    if let Some(path) = row.executable_path.as_deref() {
+        writeln!(&mut output, "{} {path}", label("path", color))
             .expect("writing to a string cannot fail");
     }
     writeln!(
@@ -1687,6 +1712,9 @@ fn filter_summary(app: &TuiApp) -> String {
     if !app.filter.names.is_empty() || !app.filter.name_regexes.is_empty() {
         active.push("name");
     }
+    if !app.filter.process_substrings.is_empty() {
+        active.push("process");
+    }
     if !app.filter.command_substrings.is_empty() || !app.filter.command_regexes.is_empty() {
         active.push("cmd");
     }
@@ -1801,6 +1829,7 @@ mod tests {
             normalize_cpu: false,
             raw_bytes: false,
             show_command: false,
+            show_path: false,
             columns: SnapshotColumns::default(),
             paused: false,
             overlay: Overlay::None,
@@ -1946,7 +1975,7 @@ mod tests {
     fn view_menu_toggles_columns() {
         let mut app = app();
         assert!(app.columns.pid);
-        app.overlay = Overlay::View { selected: 3 };
+        app.overlay = Overlay::View { selected: 4 };
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
         assert!(!app.columns.pid);
     }
@@ -2085,6 +2114,7 @@ mod tests {
                 sort_by: SortBy::Name,
                 filters: FilterSpec::default(),
                 show_command: false,
+                show_path: false,
                 limit: 20,
                 normalize_cpu: false,
             },

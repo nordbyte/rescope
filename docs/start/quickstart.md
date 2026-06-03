@@ -53,6 +53,12 @@ Filter to one process family:
 rescope record --duration 1m --name node --group process
 ```
 
+Search flexibly across PID, process name, executable path and command line, and show the executable path:
+
+```bash
+rescope snapshot --process node --show-path
+```
+
 Export machine-readable output:
 
 ```bash

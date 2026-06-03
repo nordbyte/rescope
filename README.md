@@ -9,6 +9,7 @@ Use the README for the first install and quick start. Full documentation is avai
 ## What rescope shows
 
 - CPU usage per process and aggregated by user, name, command, executable or parent PID/name.
+- Flexible process filtering across PID, process name, executable path and command line.
 - Resident memory per process and aggregate RAM start/end/min/max/p95/average/delta during recordings.
 - Per-process read and write counters with safe deltas.
 - Approximate recording percentiles for CPU, RAM and combined I/O plus started/exited process counts.
@@ -55,6 +56,8 @@ npm install -g rescope
 rescope snapshot --limit 10
 rescope snapshot --group user --sort ram --limit 10
 rescope snapshot --group executable --sort io --all
+rescope snapshot --process postgres --show-path
+rescope snapshot --path /usr/bin --show-path
 rescope snapshot --name-regex '^(node|bun)$' --min-ram 512MiB
 rescope snapshot --profile tree --parent-name systemd
 rescope live --tui --group command --sort cpu
@@ -87,7 +90,9 @@ rescope --config rescope.json live --tui
 
 ## Privacy
 
-Command lines are hidden by default because they can contain secrets. Use `--show-command` to display them in process rows. `--cmd` filters command lines internally without changing the default display. `--group command` intentionally displays command lines because command aggregation is explicitly requested.
+Command lines are hidden by default because they can contain secrets. Use `--show-command` to display them in process rows. `--cmd` and `--process` can filter command lines internally without changing the default display. `--group command` intentionally displays command lines because command aggregation is explicitly requested.
+
+Executable paths can include local usernames or project paths. They are hidden by default in process rows; use `--show-path` to display the full executable path. `--path` is an alias for the existing executable-path filter `--exe`.
 
 `rescope` is read-only, requires no root privileges, performs no network requests and sends no telemetry.
 

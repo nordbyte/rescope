@@ -125,6 +125,7 @@ mod tests {
             display_name: name.to_string(),
             pid: None,
             user_name: None,
+            executable_path: None,
             users: None,
             process_count: 1,
             cpu_percent: cpu,

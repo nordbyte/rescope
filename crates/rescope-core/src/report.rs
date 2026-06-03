@@ -12,6 +12,7 @@ pub struct SnapshotReportOptions {
     pub sort_by: SortBy,
     pub filters: FilterSpec,
     pub show_command: bool,
+    pub show_path: bool,
     pub limit: usize,
     pub normalize_cpu: bool,
 }
@@ -24,6 +25,7 @@ pub struct RecordingReportOptions {
     pub sort_by: SortBy,
     pub filters: FilterSpec,
     pub show_command: bool,
+    pub show_path: bool,
     pub limit: usize,
     pub include_idle: bool,
     pub normalize_cpu: bool,
@@ -39,6 +41,7 @@ pub fn build_snapshot_report(
         options.sort_by,
         options.interval,
         options.show_command,
+        options.show_path,
         options.limit,
     );
     SnapshotReport {
@@ -56,6 +59,7 @@ pub fn build_snapshot_report(
         process_total: sample.processes.len(),
         logical_cpu_count: sample.logical_cpu_count,
         cpu_normalized: options.normalize_cpu,
+        show_path: options.show_path,
         rows,
         notes: platform_notes(),
     }
@@ -81,6 +85,7 @@ pub fn build_recording_report(
             interval: options.interval,
             measured_duration: options.requested_duration,
             show_command: options.show_command,
+            show_path: options.show_path,
             limit: options.limit,
             include_idle: options.include_idle,
         },
@@ -101,6 +106,7 @@ pub fn build_recording_report(
             .max()
             .unwrap_or(1),
         cpu_normalized: options.normalize_cpu,
+        show_path: options.show_path,
         rows,
         notes: platform_notes(),
     }
@@ -127,6 +133,7 @@ pub fn build_recording_report_from_accumulator(
         filters: options.filters,
         logical_cpu_count,
         cpu_normalized: options.normalize_cpu,
+        show_path: options.show_path,
         rows,
         notes: platform_notes(),
     }

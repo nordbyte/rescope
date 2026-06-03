@@ -30,6 +30,7 @@ pub enum SortBy {
 pub struct FilterSpec {
     pub pids: Vec<u32>,
     pub users: Vec<String>,
+    pub process_substrings: Vec<String>,
     pub names: Vec<String>,
     pub name_regexes: Vec<String>,
     pub command_substrings: Vec<String>,
@@ -84,11 +85,17 @@ impl RawProcessSample {
             .unwrap_or_else(|| "unknown".to_string())
     }
 
-    pub fn display_process(&self, show_command: bool) -> String {
+    pub fn display_process(&self, show_command: bool, show_path: bool) -> String {
         if show_command {
             self.command
                 .as_ref()
                 .filter(|cmd| !cmd.trim().is_empty())
+                .cloned()
+                .unwrap_or_else(|| self.identity.name.clone())
+        } else if show_path {
+            self.executable
+                .as_ref()
+                .filter(|path| !path.trim().is_empty())
                 .cloned()
                 .unwrap_or_else(|| self.identity.name.clone())
         } else {
@@ -132,6 +139,8 @@ pub struct SnapshotRow {
     pub display_name: String,
     pub pid: Option<u32>,
     pub user_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable_path: Option<String>,
     pub users: Option<String>,
     pub process_count: usize,
     pub cpu_percent: f32,
@@ -156,6 +165,8 @@ pub struct AggregateRow {
     pub display_name: String,
     pub pid: Option<u32>,
     pub user_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable_path: Option<String>,
     pub users: Option<String>,
     pub process_count: usize,
     pub top_process: Option<String>,
@@ -215,6 +226,7 @@ pub struct SnapshotReport {
     pub process_total: usize,
     pub logical_cpu_count: usize,
     pub cpu_normalized: bool,
+    pub show_path: bool,
     pub rows: Vec<SnapshotRow>,
     pub notes: Vec<String>,
 }
@@ -235,6 +247,7 @@ pub struct RecordingReport {
     pub filters: FilterSpec,
     pub logical_cpu_count: usize,
     pub cpu_normalized: bool,
+    pub show_path: bool,
     pub rows: Vec<AggregateRow>,
     pub notes: Vec<String>,
 }

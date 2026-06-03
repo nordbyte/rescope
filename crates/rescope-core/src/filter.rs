@@ -23,6 +23,7 @@ pub fn matches_filters(process_sample: &RawProcessSample, filters: &FilterSpec) 
 pub struct CompiledFilter {
     pids: Vec<u32>,
     users: Vec<String>,
+    process_substrings: Vec<String>,
     names: Vec<String>,
     name_regexes: Vec<Regex>,
     command_substrings: Vec<String>,
@@ -45,6 +46,7 @@ impl CompiledFilter {
         Self {
             pids: filters.pids.clone(),
             users: lower_all(&filters.users),
+            process_substrings: lower_all(&filters.process_substrings),
             names: lower_all(&filters.names),
             name_regexes: compile_regexes(&filters.name_regexes),
             command_substrings: lower_all(&filters.command_substrings),
@@ -82,6 +84,12 @@ impl CompiledFilter {
         }
 
         if !self.users.is_empty() && !matches_user(process_sample, &self.users) {
+            return false;
+        }
+
+        if !self.process_substrings.is_empty()
+            && !matches_process_search(process_sample, &self.process_substrings)
+        {
             return false;
         }
 
@@ -173,6 +181,7 @@ impl CompiledFilter {
 fn has_positive_filters(filters: &FilterSpec) -> bool {
     !filters.pids.is_empty()
         || !filters.users.is_empty()
+        || !filters.process_substrings.is_empty()
         || !filters.names.is_empty()
         || !filters.name_regexes.is_empty()
         || !filters.command_substrings.is_empty()
@@ -233,6 +242,29 @@ fn matches_any_regex(value: &str, regexes: &[Regex]) -> bool {
     regexes.iter().any(|regex| regex.is_match(value))
 }
 
+fn matches_process_search(process_sample: &RawProcessSample, needles: &[String]) -> bool {
+    needles.iter().any(|needle| {
+        process_sample.identity.pid.to_string().contains(needle)
+            || process_sample
+                .identity
+                .name
+                .to_ascii_lowercase()
+                .contains(needle)
+            || process_sample
+                .executable
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .contains(needle)
+            || process_sample
+                .command
+                .as_deref()
+                .unwrap_or_default()
+                .to_ascii_lowercase()
+                .contains(needle)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::SystemTime;
@@ -285,6 +317,17 @@ mod tests {
             ..FilterSpec::default()
         };
         assert!(matches_filters(&sample(), &filters));
+    }
+
+    #[test]
+    fn process_filter_matches_name_pid_executable_and_command() {
+        for needle in ["node", "42", "/usr/bin/node", "server.js"] {
+            let filters = FilterSpec {
+                process_substrings: vec![needle.to_string()],
+                ..FilterSpec::default()
+            };
+            assert!(matches_filters(&sample(), &filters), "{needle}");
+        }
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub struct RecordingAggregateOptions {
     pub interval: Duration,
     pub measured_duration: Duration,
     pub show_command: bool,
+    pub show_path: bool,
     pub limit: usize,
     pub include_idle: bool,
 }
@@ -26,6 +27,7 @@ pub struct RecordingAccumulatorOptions {
     pub sort_by: SortBy,
     pub interval: Duration,
     pub show_command: bool,
+    pub show_path: bool,
     pub include_idle: bool,
 }
 
@@ -68,6 +70,7 @@ impl RecordingAccumulator {
             self.options.group_by,
             self.options.sort_by,
             self.options.show_command,
+            self.options.show_path,
         );
         for (key, group_sample) in grouped {
             self.rows_by_key
@@ -120,6 +123,7 @@ pub fn aggregate_snapshot(
     sort_by: SortBy,
     interval: Duration,
     show_command: bool,
+    show_path: bool,
     limit: usize,
 ) -> Vec<SnapshotRow> {
     let interval_seconds = duration_seconds(interval);
@@ -132,7 +136,7 @@ pub fn aggregate_snapshot(
             .or_insert_with(|| {
                 SnapshotAcc::new(key, group_by, process, show_command, sample.timestamp)
             })
-            .add(process, sort_by, show_command);
+            .add(process, sort_by, show_command, show_path);
     }
 
     let mut rows: Vec<SnapshotRow> = grouped
@@ -152,6 +156,7 @@ pub fn aggregate_recording(
         sort_by: options.sort_by,
         interval: options.interval,
         show_command: options.show_command,
+        show_path: options.show_path,
         include_idle: options.include_idle,
     });
     for sample in samples {
@@ -165,6 +170,7 @@ fn group_sample_for_recording(
     group_by: GroupBy,
     sort_by: SortBy,
     show_command: bool,
+    show_path: bool,
 ) -> HashMap<GroupKey, GroupSample> {
     let mut grouped: HashMap<GroupKey, GroupSample> = HashMap::new();
 
@@ -173,7 +179,7 @@ fn group_sample_for_recording(
         grouped
             .entry(key.clone())
             .or_insert_with(|| GroupSample::new(group_by, process, show_command, sample.timestamp))
-            .add(process, sort_by, show_command);
+            .add(process, sort_by, show_command, show_path);
     }
 
     grouped
@@ -208,7 +214,7 @@ fn display_name_for_group(
     show_command: bool,
 ) -> String {
     match group_type {
-        GroupBy::Process => process.display_process(show_command),
+        GroupBy::Process => process.display_process(show_command, false),
         GroupBy::Name => process.identity.name.clone(),
         GroupBy::User => process.user_display(),
         GroupBy::Command => process
@@ -268,6 +274,7 @@ struct SnapshotAcc {
     display_name: String,
     pid: Option<u32>,
     user_name: Option<String>,
+    executable_path: Option<String>,
     users: BTreeSet<String>,
     process_count: usize,
     cpu_percent: f32,
@@ -294,6 +301,9 @@ impl SnapshotAcc {
             display_name,
             pid: (group_type == GroupBy::Process).then_some(process.identity.pid),
             user_name: matches!(group_type, GroupBy::Process).then(|| process.user_display()),
+            executable_path: matches!(group_type, GroupBy::Process)
+                .then(|| process.executable.clone())
+                .flatten(),
             users: BTreeSet::new(),
             process_count: 0,
             cpu_percent: 0.0,
@@ -306,7 +316,13 @@ impl SnapshotAcc {
         }
     }
 
-    fn add(&mut self, process: &RawProcessSample, sort_by: SortBy, show_command: bool) {
+    fn add(
+        &mut self,
+        process: &RawProcessSample,
+        sort_by: SortBy,
+        show_command: bool,
+        show_path: bool,
+    ) {
         self.process_count += 1;
         self.cpu_percent += process.cpu_percent;
         self.ram_bytes += process.memory_bytes;
@@ -315,7 +331,7 @@ impl SnapshotAcc {
         self.disk_write_delta_bytes += process.disk_write_delta_bytes;
         self.users.insert(process.user_display());
 
-        let process_name = process.display_process(show_command);
+        let process_name = process.display_process(show_command, show_path);
         let contribution = metric_contribution(process, sort_by);
         if self
             .top_process
@@ -334,6 +350,7 @@ impl SnapshotAcc {
             display_name: self.display_name,
             pid: self.pid,
             user_name: self.user_name,
+            executable_path: self.executable_path,
             users: summarize_users(&self.users),
             process_count: self.process_count,
             cpu_percent: self.cpu_percent,
@@ -356,6 +373,7 @@ struct GroupSample {
     display_name: String,
     pid: Option<u32>,
     user_name: Option<String>,
+    executable_path: Option<String>,
     users: BTreeSet<String>,
     identities: Vec<ProcessIdentity>,
     process_count: usize,
@@ -379,6 +397,9 @@ impl GroupSample {
             display_name,
             pid: (group_type == GroupBy::Process).then_some(process.identity.pid),
             user_name: matches!(group_type, GroupBy::Process).then(|| process.user_display()),
+            executable_path: matches!(group_type, GroupBy::Process)
+                .then(|| process.executable.clone())
+                .flatten(),
             users: BTreeSet::new(),
             identities: Vec::new(),
             process_count: 0,
@@ -391,7 +412,13 @@ impl GroupSample {
         }
     }
 
-    fn add(&mut self, process: &RawProcessSample, sort_by: SortBy, show_command: bool) {
+    fn add(
+        &mut self,
+        process: &RawProcessSample,
+        sort_by: SortBy,
+        show_command: bool,
+        show_path: bool,
+    ) {
         self.process_count += 1;
         self.cpu_percent += process.cpu_percent;
         self.memory_bytes += process.memory_bytes;
@@ -400,7 +427,7 @@ impl GroupSample {
         self.users.insert(process.user_display());
         self.identities.push(process.identity.clone());
 
-        let process_name = process.display_process(show_command);
+        let process_name = process.display_process(show_command, show_path);
         let contribution = metric_contribution(process, sort_by);
         if self
             .top_process
@@ -419,6 +446,7 @@ struct RecordingAcc {
     display_name: String,
     pid: Option<u32>,
     user_name: Option<String>,
+    executable_path: Option<String>,
     users: BTreeSet<String>,
     max_process_count: usize,
     top_process: Option<(String, f64)>,
@@ -453,6 +481,7 @@ impl RecordingAcc {
             display_name: sample.display_name.clone(),
             pid: sample.pid,
             user_name: sample.user_name.clone(),
+            executable_path: sample.executable_path.clone(),
             users: sample.users.clone(),
             max_process_count: 0,
             top_process: None,
@@ -561,6 +590,7 @@ impl RecordingAcc {
             display_name: self.display_name,
             pid: self.pid,
             user_name: self.user_name,
+            executable_path: self.executable_path,
             users: summarize_users(&self.users),
             process_count: self.max_process_count,
             top_process: self.top_process.map(|(name, _)| name),
@@ -785,6 +815,7 @@ mod tests {
             SortBy::Ram,
             Duration::from_secs(1),
             false,
+            false,
             10,
         );
 
@@ -809,6 +840,7 @@ mod tests {
                 interval: Duration::from_secs(1),
                 measured_duration: Duration::from_secs(2),
                 show_command: false,
+                show_path: false,
                 limit: 10,
                 include_idle: true,
             },
@@ -834,6 +866,7 @@ mod tests {
                 interval: Duration::from_secs(1),
                 measured_duration: Duration::from_secs(2),
                 show_command: false,
+                show_path: false,
                 limit: 10,
                 include_idle: true,
             },
@@ -859,6 +892,7 @@ mod tests {
             sort_by: SortBy::Io,
             interval: Duration::from_secs(1),
             show_command: false,
+            show_path: false,
             include_idle: true,
         });
         for sample in &samples {
@@ -874,6 +908,7 @@ mod tests {
                 interval: Duration::from_secs(1),
                 measured_duration: Duration::from_secs(2),
                 show_command: false,
+                show_path: false,
                 limit: 10,
                 include_idle: true,
             },
@@ -899,6 +934,7 @@ mod tests {
             SortBy::Name,
             Duration::from_secs(1),
             false,
+            false,
             10,
         );
         assert_eq!(command_rows.len(), 1);
@@ -910,6 +946,7 @@ mod tests {
             SortBy::Name,
             Duration::from_secs(1),
             false,
+            false,
             10,
         );
         assert_eq!(executable_rows[0].display_name, "/usr/bin/node");
@@ -919,6 +956,7 @@ mod tests {
             GroupBy::Parent,
             SortBy::Name,
             Duration::from_secs(1),
+            false,
             false,
             10,
         );
@@ -948,6 +986,7 @@ mod tests {
                 interval: Duration::from_secs(1),
                 measured_duration: Duration::from_secs(2),
                 show_command: false,
+                show_path: false,
                 limit: 10,
                 include_idle: true,
             },
@@ -980,6 +1019,7 @@ mod tests {
                 interval: Duration::from_secs(1),
                 measured_duration: Duration::from_secs(3000),
                 show_command: false,
+                show_path: false,
                 limit: 10,
                 include_idle: true,
             },

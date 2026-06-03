@@ -53,6 +53,7 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
         sort_by: args.effective_sort(),
         interval: args.interval,
         show_command: args.effective_show_command(),
+        show_path: args.effective_show_path(),
         include_idle: args.effective_include_idle(),
     });
 
@@ -86,6 +87,7 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
             sort_by: args.effective_sort(),
             filters: filter,
             show_command: args.effective_show_command(),
+            show_path: args.effective_show_path(),
             limit: args.effective_limit(),
             include_idle: args.effective_include_idle(),
             normalize_cpu: args.normalize_cpu,

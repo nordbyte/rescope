@@ -49,6 +49,7 @@ pub fn run(cli: &Cli, args: &SnapshotArgs) -> Result<()> {
             sort_by: args.effective_sort(),
             filters: filter,
             show_command: args.effective_show_command(),
+            show_path: args.effective_show_path(),
             limit: args.effective_limit(),
             normalize_cpu: args.normalize_cpu,
         },

@@ -15,11 +15,13 @@
 
 - `--pid <PID>`
 - `--user <USER>`
+- `--process <SUBSTRING>`
 - `--name <NAME>`
 - `--name-regex <REGEX>`
 - `--cmd <SUBSTRING>`
 - `--cmd-regex <REGEX>`
 - `--exe <SUBSTRING>`
+- `--path <SUBSTRING>` alias for `--exe`
 - `--exe-regex <REGEX>`
 - `--parent <PID>`
 - `--parent-name <SUBSTRING>`
@@ -30,9 +32,10 @@
 - `--invert`
 - `--hide-self`
 - `--show-command`
+- `--show-path`
 
 Size filters accept raw bytes or binary suffixes such as `512MiB`, `1GiB`, `64KiB` and `10M`.
-Regex filters are case-insensitive and are validated before sampling starts. `--invert` only changes positive filters; with no positive filter it keeps all rows except `--hide-self`.
+`--process` is a flexible case-insensitive substring search across PID, process name, executable path and command line. Regex filters are case-insensitive and are validated before sampling starts. `--invert` only changes positive filters; with no positive filter it keeps all rows except `--hide-self`.
 
 ## Profiles
 
@@ -89,4 +92,4 @@ The config file is JSON and supports global defaults plus common command default
 }
 ```
 
-Supported fields are `color`, `no_color`, `bytes`, `quiet`, `profile`, `group`, `sort`, `limit`, `interval`, `normalize_cpu`, `show_command`, `hide_self` and `include_idle`.
+Supported fields are `color`, `no_color`, `bytes`, `quiet`, `profile`, `group`, `sort`, `limit`, `interval`, `normalize_cpu`, `show_command`, `show_path`, `hide_self` and `include_idle`.

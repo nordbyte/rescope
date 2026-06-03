@@ -170,6 +170,52 @@ fn snapshot_accepts_executable_and_parent_filters() {
 }
 
 #[test]
+fn snapshot_accepts_flexible_process_filter_and_path_display() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "snapshot",
+            "--process",
+            "rescope",
+            "--show-path",
+            "--limit",
+            "5",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("PATH"));
+}
+
+#[test]
+fn snapshot_accepts_path_alias_for_executable_filter() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args(["snapshot", "--path", "/usr", "--limit", "1"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn snapshot_json_exports_executable_paths_when_requested() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "snapshot",
+            "--process",
+            "rescope",
+            "--show-path",
+            "--limit",
+            "5",
+            "--json",
+            "-",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"show_path\": true"))
+        .stdout(predicate::str::contains("\"process_substrings\""));
+}
+
+#[test]
 fn config_file_applies_profile_defaults() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("rescope.json");

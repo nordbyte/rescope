@@ -22,6 +22,7 @@ const TIMELINE_DISPLAY_MAX_CHARS: usize = 20;
 pub struct SnapshotColumns {
     pub pid: bool,
     pub user: bool,
+    pub path: bool,
     pub process_count: bool,
     pub users: bool,
     pub cpu: bool,
@@ -36,6 +37,7 @@ impl Default for SnapshotColumns {
         Self {
             pid: true,
             user: true,
+            path: true,
             process_count: true,
             users: true,
             cpu: true,
@@ -112,7 +114,7 @@ pub fn render_snapshot_with_options(
     let row_range = visible_row_range(report.rows.len(), options.row_offset, options.max_rows);
     match report.group_by {
         GroupBy::Process => {
-            table.set_header(snapshot_process_header(&options, color));
+            table.set_header(snapshot_process_header(report.show_path, &options, color));
             for (index, row) in report.rows[row_range.clone()].iter().enumerate() {
                 let absolute_index = row_range.start + index;
                 let mut cells = Vec::new();
@@ -127,6 +129,9 @@ pub fn render_snapshot_with_options(
                     ));
                 }
                 cells.push(truncated_cell(&row.display_name, PROCESS_DISPLAY_MAX_CHARS));
+                if report.show_path && options.columns.path {
+                    cells.push(path_cell(row.executable_path.as_deref()));
+                }
                 push_metric_cells(&mut cells, row, report, raw_bytes, color, options.columns);
                 table.add_row(cells);
             }
@@ -251,10 +256,11 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
     let mut table = plain_table();
     match report.group_by {
         GroupBy::Process => {
-            table.set_header(vec![
-                "PID",
-                "USER",
-                "PROCESS",
+            let mut header = vec!["PID", "USER", "PROCESS"];
+            if report.show_path {
+                header.push("PATH");
+            }
+            header.extend([
                 "CPU avg",
                 "CPU max",
                 "CPU p95",
@@ -275,14 +281,20 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
                 "last",
                 "STATUS",
             ]);
+            table.set_header(header);
             for row in &report.rows {
-                table.add_row(vec![
+                let mut cells = vec![
                     cell(row.pid.map(|pid| pid.to_string()).unwrap_or_default()),
                     truncated_cell(
                         row.user_name.as_deref().unwrap_or("unknown"),
                         USER_DISPLAY_MAX_CHARS,
                     ),
                     truncated_cell(&row.display_name, PROCESS_DISPLAY_MAX_CHARS),
+                ];
+                if report.show_path {
+                    cells.push(path_cell(row.executable_path.as_deref()));
+                }
+                cells.extend([
                     cpu_avg(row, report, color),
                     cpu_max(row, report, color),
                     cpu_percent_cell(
@@ -313,6 +325,7 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
                     cell(humantime::format_rfc3339_seconds(row.last_seen).to_string()),
                     lifecycle_cell(&row.lifecycle_status),
                 ]);
+                table.add_row(cells);
             }
         }
         GroupBy::Name | GroupBy::Command | GroupBy::Executable | GroupBy::Parent => {
@@ -428,7 +441,11 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
     format!("{table}\n")
 }
 
-fn snapshot_process_header(options: &SnapshotRenderOptions, color: bool) -> Vec<Cell> {
+fn snapshot_process_header(
+    show_path: bool,
+    options: &SnapshotRenderOptions,
+    color: bool,
+) -> Vec<Cell> {
     let mut header = Vec::new();
     push_selection_header(&mut header, options.selected_row, color);
     if options.columns.pid {
@@ -438,6 +455,9 @@ fn snapshot_process_header(options: &SnapshotRenderOptions, color: bool) -> Vec<
         header.push(header_cell("USER", color));
     }
     header.push(header_cell("PROCESS", color));
+    if show_path && options.columns.path {
+        header.push(header_cell("PATH", color));
+    }
     push_metric_header(&mut header, options.columns, color);
     header
 }
@@ -600,6 +620,9 @@ fn describe_filters(report: &RecordingReport) -> String {
     if !filters.users.is_empty() {
         parts.push(format!("user={:?}", filters.users));
     }
+    if !filters.process_substrings.is_empty() {
+        parts.push(format!("process={:?}", filters.process_substrings));
+    }
     if !filters.names.is_empty() {
         parts.push(format!("name={:?}", filters.names));
     }
@@ -668,6 +691,14 @@ fn header_cell(value: impl Into<String>, color: bool) -> Cell {
 
 fn truncated_cell(value: &str, max_chars: usize) -> Cell {
     cell(truncate_for_table(value, max_chars))
+}
+
+fn path_cell(value: Option<&str>) -> Cell {
+    cell(
+        value
+            .filter(|path| !path.trim().is_empty())
+            .unwrap_or("n/a"),
+    )
 }
 
 fn group_cell(value: &str, group_by: GroupBy) -> Cell {
@@ -821,6 +852,7 @@ mod tests {
             process_total: 2,
             logical_cpu_count: 1,
             cpu_normalized: false,
+            show_path: false,
             rows: vec![snapshot_row(1, "alpha"), snapshot_row(2, "beta")],
             notes: Vec::new(),
         };
@@ -842,6 +874,33 @@ mod tests {
         assert!(!rendered.contains("alpha"));
     }
 
+    #[test]
+    fn render_snapshot_shows_full_path_when_enabled() {
+        let report = SnapshotReport {
+            started_at: SystemTime::UNIX_EPOCH,
+            ended_at: SystemTime::UNIX_EPOCH,
+            duration: Duration::from_secs(1),
+            interval: Duration::from_secs(1),
+            sample_count: 1,
+            group_by: GroupBy::Process,
+            sort_by: SortBy::Cpu,
+            filters: FilterSpec::default(),
+            total_memory_bytes: 1024,
+            available_memory_bytes: 512,
+            global_cpu_percent: 0.0,
+            process_total: 1,
+            logical_cpu_count: 1,
+            cpu_normalized: false,
+            show_path: true,
+            rows: vec![snapshot_row(1, "alpha")],
+            notes: Vec::new(),
+        };
+
+        let rendered = render_snapshot(&report, false, false, false);
+        assert!(rendered.contains("PATH"));
+        assert!(rendered.contains("/usr/bin/alpha"));
+    }
+
     fn snapshot_row(pid: u32, name: &str) -> rescope_core::SnapshotRow {
         rescope_core::SnapshotRow {
             key: GroupKey::Name(name.to_string()),
@@ -849,6 +908,7 @@ mod tests {
             display_name: name.to_string(),
             pid: Some(pid),
             user_name: Some("alice".to_string()),
+            executable_path: Some(format!("/usr/bin/{name}")),
             users: None,
             process_count: 1,
             cpu_percent: 1.0,
