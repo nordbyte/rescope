@@ -127,6 +127,9 @@ const IO_THRESHOLDS: [Option<u64>; 5] = [
     Some(16 * 1024 * 1024),
 ];
 const STATUS_VISIBLE_TICKS: u64 = 4;
+const MAIN_SHORTCUTS: &str = "o options | s sort | g group | f filters | v view | r recording | e export | / search | ? help | q quit";
+const MENU_SHORTCUTS: &str = "up/down choose | Enter apply | Esc back | q quit";
+const DETAIL_SHORTCUTS: &str = "f follow/freeze | Esc close | q quit";
 const DEFAULT_VIEWPORT: Viewport = Viewport {
     width: 120,
     height: 40,
@@ -1172,7 +1175,7 @@ fn render_app(app: &TuiApp, report: &SnapshotReport, color: bool, viewport: View
     ));
     output.push_str(&overlay);
     output.push_str(&footer);
-    output
+    fit_to_viewport(output, viewport)
 }
 
 fn format_state_line(app: &TuiApp, report: &SnapshotReport, color: bool) -> String {
@@ -1475,9 +1478,8 @@ fn format_export_path(
 fn format_help(color: bool) -> String {
     let lines = [
         section_title("Help", color),
-        "o options menu".to_string(),
-        "s sort menu | g group menu | f filters | v view | r recording | e export".to_string(),
-        "/ search | up/down select row | PgUp/PgDn page | Enter details".to_string(),
+        MAIN_SHORTCUTS.to_string(),
+        "up/down select row | PgUp/PgDn page | Enter details".to_string(),
         "details: f toggle frozen/follow mode".to_string(),
         "space pause/resume | +/- row limit | [/] refresh interval".to_string(),
         "n normalized CPU | b raw bytes | c command display | x path display".to_string(),
@@ -1571,11 +1573,7 @@ fn format_detail(app: &TuiApp, row: &SnapshotRow, follow: bool, color: bool) -> 
     writeln!(
         &mut output,
         "\n{}\n",
-        paint(
-            "f follow/freeze | Esc close | q quit",
-            TuiStyle::Muted,
-            color
-        )
+        paint(DETAIL_SHORTCUTS, TuiStyle::Muted, color)
     )
     .expect("writing to a string cannot fail");
     output
@@ -1583,24 +1581,30 @@ fn format_detail(app: &TuiApp, row: &SnapshotRow, follow: bool, color: bool) -> 
 
 fn format_footer(app: &TuiApp, color: bool) -> String {
     if app.overlay_open() {
-        format!(
-            "\n{}\n",
-            paint(
-                "up/down choose | Enter apply | Esc back | q quit",
-                TuiStyle::Muted,
-                color
-            )
-        )
+        format!("\n{}\n", paint(MENU_SHORTCUTS, TuiStyle::Muted, color))
     } else {
-        format!(
-            "\n{}\n",
-            paint(
-                "o options | ? help | / search | Enter details | s sort | r record | q quit",
-                TuiStyle::Muted,
-                color
-            )
-        )
+        format!("\n{}\n", paint(MAIN_SHORTCUTS, TuiStyle::Muted, color))
     }
+}
+
+fn fit_to_viewport(output: String, viewport: Viewport) -> String {
+    let max_lines = viewport.height.max(1) as usize;
+    let mut lines = output.lines().collect::<Vec<_>>();
+    while lines.last().is_some_and(|line| line.is_empty()) {
+        lines.pop();
+    }
+    if lines.len() > max_lines {
+        if max_lines == 1 {
+            lines = lines.last().copied().into_iter().collect::<Vec<_>>();
+        } else {
+            let footer = lines.last().copied();
+            lines.truncate(max_lines - 1);
+            if let Some(footer) = footer {
+                lines.push(footer);
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 fn apply_tui_filters(sample: &SystemSample, app: &TuiApp) -> SystemSample {
@@ -1637,6 +1641,8 @@ fn process_matches_query(process: &RawProcessSample, query: &str) -> bool {
 
 fn current_viewport() -> Viewport {
     terminal_size()
+        .ok()
+        .filter(|(width, height)| *width >= 40 && *height >= 10)
         .map(|(width, height)| Viewport { width, height })
         .unwrap_or(DEFAULT_VIEWPORT)
 }
@@ -1950,7 +1956,7 @@ fn export_extension(format: ExportFormat) -> &'static str {
 }
 
 fn write_tui_text(output: &str) -> io::Result<()> {
-    let output = output.replace('\n', "\r\n");
+    let output = output.trim_end_matches('\n').replace('\n', "\r\n");
     io::stdout().write_all(output.as_bytes())
 }
 
@@ -2248,6 +2254,50 @@ mod tests {
 
         assert!(colored.contains("\x1b["));
         assert!(!plain.contains("\x1b["));
+    }
+
+    #[test]
+    fn footer_lists_all_direct_option_shortcuts() {
+        let app = app();
+        let footer = format_footer(&app, false);
+
+        for shortcut in [
+            "o options",
+            "s sort",
+            "g group",
+            "f filters",
+            "v view",
+            "r recording",
+            "e export",
+            "/ search",
+            "? help",
+        ] {
+            assert!(footer.contains(shortcut), "{shortcut}");
+        }
+    }
+
+    #[test]
+    fn render_app_fits_viewport_without_trailing_newline() {
+        let mut app = app();
+        let report = report_with_processes(&[
+            "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+        ]);
+        app.last_report = Some(report.clone());
+
+        let rendered = render_app(
+            &app,
+            &report,
+            false,
+            Viewport {
+                width: 80,
+                height: 12,
+            },
+        );
+
+        assert!(rendered.lines().count() <= 12);
+        assert!(!rendered.ends_with('\n'));
+        assert!(rendered.contains("g group"));
+        assert!(rendered.contains("f filters"));
     }
 
     fn report_with_processes(names: &[&str]) -> SnapshotReport {

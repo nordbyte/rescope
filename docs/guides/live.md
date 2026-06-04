@@ -1,6 +1,6 @@
 # Live monitoring
 
-`rescope live` repeatedly samples system processes and renders the current top rows.
+`rescope live` repeatedly samples system processes and renders the current top rows. Running `rescope` without a subcommand opens interactive live mode when a terminal is available.
 
 ## Plain mode
 
@@ -8,7 +8,7 @@
 rescope live --plain --interval 1s --limit 20
 ```
 
-Plain mode clears and redraws the terminal. It is useful in simple terminals and over remote shells.
+Plain mode clears and redraws the terminal, including scrollback. It is useful in simple terminals and over remote shells.
 
 ## Interactive mode
 
@@ -17,6 +17,7 @@ rescope live --tui --group user --sort cpu
 ```
 
 Interactive mode uses an alternate screen and exits with `q`, `Esc` or `Ctrl-C`.
+The footer shows the same direct option shortcuts in every main live view.
 
 The interactive TUI is menu-driven:
 

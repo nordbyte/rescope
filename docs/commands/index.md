@@ -15,4 +15,4 @@
 | [`man`](man.md) | Generate a man page. |
 | [`help and version`](help-version.md) | Built-in help and version flags. |
 
-Running `rescope` without a subcommand is equivalent to `rescope live`.
+Running `rescope` without a subcommand starts the interactive live TUI when a terminal is available and falls back to plain live output otherwise.

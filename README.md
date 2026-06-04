@@ -80,8 +80,8 @@ rescope completions bash > rescope.bash
 rescope man > rescope.1
 ```
 
-Running `rescope` without a subcommand is equivalent to `rescope live`.
-In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details, `s` for sort, `v` for columns, `r` for recording and `e` for export. In details, `f` toggles frozen versus following the same process or group identity. Menus use up/down plus Enter, so grouping, sorting, filters, view options, sampling and exports can be changed without remembering CLI flags.
+Running `rescope` without a subcommand starts the interactive live TUI when a terminal is available and falls back to plain live output otherwise.
+In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details, `s` for sort, `g` for grouping, `f` for filters, `v` for columns, `r` for recording and `e` for export. In details, `f` toggles frozen versus following the same process or group identity. Menus use up/down plus Enter, so grouping, sorting, filters, view options, sampling and exports can be changed without remembering CLI flags.
 
 Profiles are available with `--profile cpu|memory|io|commands|users|tree`. A JSON config file can provide defaults:
 

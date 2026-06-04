@@ -21,7 +21,7 @@ rescope snapshot --profile tree --parent-name systemd
 
 ## Live mode
 
-Plain refresh mode:
+Running `rescope` without a subcommand opens the interactive live TUI when a terminal is available. Plain refresh mode is still available explicitly:
 
 ```bash
 rescope live --interval 1s --limit 20
@@ -33,7 +33,7 @@ Interactive terminal mode:
 rescope live --tui --group command --sort cpu
 ```
 
-Press `o` for options, `?` for help, `/` for search, `Enter` for row details and `q`, `Esc` or `Ctrl-C` to exit. In details, press `f` to switch between frozen details and following the same process or group identity.
+Press `o` for options, `s` for sort, `g` for grouping, `f` for filters, `v` for view settings, `r` for recording, `e` for export, `?` for help, `/` for search, `Enter` for row details and `q`, `Esc` or `Ctrl-C` to exit. In details, press `f` to switch between frozen details and following the same process or group identity.
 
 ## Record a window
 

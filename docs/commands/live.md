@@ -6,6 +6,8 @@ Render repeated snapshots.
 rescope live [OPTIONS]
 ```
 
+Running `rescope` without a subcommand starts this live mode in interactive TUI mode when a terminal is available.
+
 ## Examples
 
 ```bash
@@ -22,8 +24,8 @@ rescope live --prometheus 127.0.0.1:9898
 
 ## Modes
 
-- Plain mode clears and redraws the terminal.
-- TUI mode uses an alternate screen with a central `o` options menu, direct menus for sorting/grouping/filtering/view/recording/export, frozen or following row details, live search, pause/resume, row-limit, interval and column controls.
+- Plain mode clears and redraws the terminal, including terminal scrollback.
+- TUI mode uses an alternate screen with a central `o` options menu, direct menus for sorting/grouping/filtering/view/recording/export, frozen or following row details, live search, pause/resume, row-limit, interval and column controls. The footer shows the same direct option shortcuts in every main live view.
 - `--once` renders one sample and exits.
 
 `--json` and `--csv` are supported only with `--once`. Continuous exports use `--jsonl` or `--csv-stream`; use `--quiet` when a stream writes to stdout.
