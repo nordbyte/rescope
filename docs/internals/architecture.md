@@ -30,7 +30,7 @@ The CLI crate owns:
 - JSON config default merging
 - command execution
 - plain and interactive terminal output
-- JSON and CSV export
+- JSON, JSONL and CSV export
 - live loop and streaming recording loop control
 
 ## npm/rescope

@@ -15,6 +15,7 @@ rescope snapshot --group executable --sort io --all
 rescope snapshot --profile tree --parent-name systemd
 rescope snapshot --exe /usr/bin --profile io
 rescope snapshot --json snapshot.json
+rescope snapshot --no-system --limit 5
 ```
 
 ## Options
@@ -26,5 +27,6 @@ Snapshot-specific options:
 
 - `--interval <DURATION>` warm-up and CPU measurement interval, default `1s`
 - `--show-system` show system summary
+- `--no-system` hide system summary
 - `--all` do not truncate rows
 - `--normalize-cpu` display CPU divided by logical CPU count

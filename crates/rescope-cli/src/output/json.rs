@@ -23,6 +23,13 @@ pub fn write_recording(path: &Path, report: &RecordingReport) -> Result<()> {
     write_report(path, "record", report)
 }
 
+pub fn write_custom<T>(path: &Path, mode: &'static str, report: &T) -> Result<()>
+where
+    T: Serialize,
+{
+    write_report(path, mode, report)
+}
+
 pub fn writes_stdout(path: &Option<std::path::PathBuf>) -> bool {
     path.as_deref() == Some(Path::new("-"))
 }

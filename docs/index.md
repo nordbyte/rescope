@@ -9,9 +9,12 @@ Inspect and record resource usage by process and user.
 - Takes one-shot snapshots for scripts and CI.
 - Runs a live terminal view with plain refresh or interactive TUI mode.
 - Records a bounded time window and prints an aggregate report.
+- Renders process trees with subtree CPU, RAM and I/O totals.
+- Watches for threshold/filter matches and exits with an alert code.
+- Diffs two JSON reports to rank before/after changes.
 - Groups by process, process name, user, command line, executable path or parent PID.
 - Filters by PID, user, flexible process search, process name, command substring and executable path.
-- Exports JSON and CSV to files or stdout.
+- Exports JSON, JSONL and CSV to files or stdout.
 
 ## Common commands
 
@@ -21,6 +24,9 @@ rescope snapshot --group user --sort ram
 rescope live --tui --group command
 rescope record --duration 1m --interval 1s --group user
 rescope record --duration 30s --name node --json report.json
+rescope tree --process postgres --show-path
+rescope watch --name postgres --min-cpu 80 --duration 5m
+rescope diff before.json after.json
 ```
 
 ## Documentation map

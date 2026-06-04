@@ -11,6 +11,13 @@
     "vendor",
     "README.md"
   ],
+  "optionalDependencies": {
+    "@rescope/rescope-darwin-arm64": "0.1.0",
+    "@rescope/rescope-darwin-x64": "0.1.0",
+    "@rescope/rescope-linux-arm64": "0.1.0",
+    "@rescope/rescope-linux-x64": "0.1.0",
+    "@rescope/rescope-win32-x64": "0.1.0"
+  },
   "engines": {
     "node": ">=14.14"
   },

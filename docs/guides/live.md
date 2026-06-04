@@ -37,12 +37,13 @@ The interactive TUI is menu-driven:
 - `+` and `-` adjust the visible row limit.
 - `[` and `]` adjust the refresh interval.
 - `n`, `b` and `c` toggle normalized CPU, raw bytes and command display.
+- `x` toggles executable path display.
 
 Menus use up/down plus Enter. Press `Esc` to close an overlay; from the main view it exits the TUI. In search and export path prompts, regular characters including `q` are inserted as text; use `Esc` or `Ctrl-C` to leave those prompts.
 
 The view menu can hide optional PID, user, rate, total and top-process columns. Narrow terminals also hide low-priority columns automatically so the selected row, primary name, CPU and RAM columns remain readable.
 
-The filter menu can set live search, invert active filters, hide the current `rescope` process and cycle CPU, RAM and I/O threshold presets without restarting the command.
+The filter menu can set live search, process, user, name, path and parent text filters, invert active filters, hide the current `rescope` process and cycle CPU, RAM and I/O threshold presets without restarting the command.
 
 The recording menu starts a short streaming recording from inside the TUI, stops it early if needed and exports the last recording as JSON or CSV. Export actions open a path prompt and refuse to overwrite an existing file.
 
@@ -55,4 +56,14 @@ rescope live --once --json live.json
 rescope live --once --csv -
 ```
 
-Continuous live exports are intentionally rejected because a single JSON or CSV file would not have a stable shape.
+## Continuous streams
+
+Use JSONL or streaming CSV for continuous machine-readable live output:
+
+```bash
+rescope live --quiet --jsonl live.jsonl
+rescope live --quiet --csv-stream live.csv
+rescope live --once --quiet --jsonl -
+```
+
+`--json` and `--csv` remain one-shot exports for `live --once`.

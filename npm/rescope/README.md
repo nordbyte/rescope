@@ -26,4 +26,7 @@ Example:
 
 ```bash
 node bin/rescope.js snapshot --group user --limit 10
+node bin/rescope.js live --once --quiet --jsonl -
+node bin/rescope.js tree --limit 20
+node bin/rescope.js diff before.json after.json
 ```

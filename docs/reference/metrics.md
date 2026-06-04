@@ -24,6 +24,10 @@ Read and write totals are calculated from per-process counters. The first appear
 
 Recording rows include `started_count` and `exited_count`. For process rows these count the selected process identity. For grouped rows they count process identities that first appeared after the recording started or disappeared before it ended.
 
+## Process details
+
+When the platform exposes them, process rows include status, runtime, accumulated CPU time, thread count, open file count and Linux cgroup path. Missing fields are omitted from JSON and left empty in CSV.
+
 ## Percentile accuracy
 
 Timeline and percentile inputs are bounded for long runs. Percentiles remain representative but can be approximate after very long recordings because old points are downsampled.

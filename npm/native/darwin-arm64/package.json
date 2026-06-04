@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "macOS arm64 native binary for rescope",
   "license": "MIT",
+  "bin": {
+    "rescope": "bin/rescope"
+  },
   "os": [
     "darwin"
   ],

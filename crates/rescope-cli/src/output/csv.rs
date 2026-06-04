@@ -37,6 +37,7 @@ fn write_snapshot_rows<W: io::Write>(
         "display_name",
         "pid",
         "user_name",
+        "users",
         "executable_path",
         "process_count",
         "cpu_percent",
@@ -49,6 +50,13 @@ fn write_snapshot_rows<W: io::Write>(
         "read_bps",
         "write_bps",
         "io_bps",
+        "top_process",
+        "status",
+        "run_time_seconds",
+        "accumulated_cpu_time_ms",
+        "thread_count",
+        "open_file_count",
+        "cgroup_path",
         "timestamp",
     ])?;
 
@@ -58,6 +66,7 @@ fn write_snapshot_rows<W: io::Write>(
             row.display_name.clone(),
             option_u32(row.pid),
             row.user_name.clone().unwrap_or_default(),
+            row.users.clone().unwrap_or_default(),
             row.executable_path.clone().unwrap_or_default(),
             row.process_count.to_string(),
             row.cpu_percent.to_string(),
@@ -70,6 +79,13 @@ fn write_snapshot_rows<W: io::Write>(
             row.read_bps.to_string(),
             row.write_bps.to_string(),
             row.io_bps.to_string(),
+            row.top_process.clone().unwrap_or_default(),
+            row.details.status.clone().unwrap_or_default(),
+            option_u64(row.details.run_time_seconds),
+            option_u64(row.details.accumulated_cpu_time_ms),
+            option_usize(row.details.thread_count),
+            option_usize(row.details.open_file_count),
+            row.details.cgroup_path.clone().unwrap_or_default(),
             system_time_ms(row.timestamp).to_string(),
         ])?;
     }
@@ -106,8 +122,10 @@ fn write_recording_rows<W: io::Write>(
         "display_name",
         "pid",
         "user_name",
+        "users",
         "executable_path",
         "process_count",
+        "top_process",
         "cpu_avg_percent",
         "cpu_avg_normalized_percent",
         "cpu_max_percent",
@@ -136,6 +154,12 @@ fn write_recording_rows<W: io::Write>(
         "first_seen",
         "last_seen",
         "lifecycle_status",
+        "status",
+        "run_time_seconds",
+        "accumulated_cpu_time_ms",
+        "thread_count",
+        "open_file_count",
+        "cgroup_path",
     ])?;
 
     for row in &report.rows {
@@ -144,8 +168,10 @@ fn write_recording_rows<W: io::Write>(
             row.display_name.clone(),
             option_u32(row.pid),
             row.user_name.clone().unwrap_or_default(),
+            row.users.clone().unwrap_or_default(),
             row.executable_path.clone().unwrap_or_default(),
             row.process_count.to_string(),
+            row.top_process.clone().unwrap_or_default(),
             row.cpu_avg_percent.to_string(),
             normalized_cpu(row.cpu_avg_percent, report.logical_cpu_count).to_string(),
             row.cpu_max_percent.to_string(),
@@ -174,6 +200,12 @@ fn write_recording_rows<W: io::Write>(
             system_time_ms(row.first_seen).to_string(),
             system_time_ms(row.last_seen).to_string(),
             row.lifecycle_status.clone(),
+            row.details.status.clone().unwrap_or_default(),
+            option_u64(row.details.run_time_seconds),
+            option_u64(row.details.accumulated_cpu_time_ms),
+            option_usize(row.details.thread_count),
+            option_usize(row.details.open_file_count),
+            row.details.cgroup_path.clone().unwrap_or_default(),
         ])?;
     }
 
@@ -192,6 +224,14 @@ fn temp_file_for(path: &Path) -> Result<tempfile::NamedTempFile> {
 }
 
 fn option_u32(value: Option<u32>) -> String {
+    value.map(|value| value.to_string()).unwrap_or_default()
+}
+
+fn option_u64(value: Option<u64>) -> String {
+    value.map(|value| value.to_string()).unwrap_or_default()
+}
+
+fn option_usize(value: Option<usize>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
 }
 

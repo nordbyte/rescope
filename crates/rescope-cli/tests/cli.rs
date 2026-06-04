@@ -283,6 +283,36 @@ fn live_once_can_export_json_to_stdout() {
 }
 
 #[test]
+fn live_once_can_stream_jsonl_to_stdout() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args(["live", "--once", "--quiet", "--jsonl", "-", "--limit", "2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"mode\":\"live\""));
+}
+
+#[test]
+fn live_once_can_stream_csv_to_stdout() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "live",
+            "--once",
+            "--quiet",
+            "--csv-stream",
+            "-",
+            "--limit",
+            "2",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "timestamp,group_type,display_name",
+        ));
+}
+
+#[test]
 fn live_export_without_once_is_rejected() {
     Command::cargo_bin("rescope")
         .unwrap()
@@ -320,4 +350,65 @@ fn stdout_export_streams_cannot_be_combined() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("only one of --json - or --csv -"));
+}
+
+#[test]
+fn tree_command_runs_and_exports_json() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args(["tree", "--limit", "5", "--json", "-"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"mode\": \"tree\""))
+        .stdout(predicate::str::contains("\"nodes\""));
+}
+
+#[test]
+fn watch_no_match_exits_successfully() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "watch",
+            "--duration",
+            "1s",
+            "--interval",
+            "1s",
+            "--name",
+            "definitely-no-such-process",
+            "--quiet",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn diff_command_compares_json_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let before = dir.path().join("before.json");
+    let after = dir.path().join("after.json");
+    std::fs::write(
+        &before,
+        r#"{"mode":"snapshot","rows":[{"group_type":"process","display_name":"alpha","pid":1,"cpu_percent":1,"ram_bytes":100,"disk_io_delta_bytes":0}]}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &after,
+        r#"{"mode":"snapshot","rows":[{"group_type":"process","display_name":"alpha","pid":1,"cpu_percent":2,"ram_bytes":150,"disk_io_delta_bytes":20},{"group_type":"process","display_name":"beta","pid":2,"cpu_percent":1,"ram_bytes":50,"disk_io_delta_bytes":0}]}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "--json",
+            "-",
+            "diff",
+            before.to_str().unwrap(),
+            after.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"mode\": \"diff\""))
+        .stdout(predicate::str::contains("\"status\": \"changed\""))
+        .stdout(predicate::str::contains("\"status\": \"added\""));
 }

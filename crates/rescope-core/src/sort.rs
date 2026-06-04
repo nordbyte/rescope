@@ -75,10 +75,7 @@ fn recording_cmp(left: &AggregateRow, right: &AggregateRow, sort_by: SortBy) -> 
             .disk_write_total_bytes
             .cmp(&left.disk_write_total_bytes),
         SortBy::Io => right.disk_io_total_bytes.cmp(&left.disk_io_total_bytes),
-        SortBy::IoAvg => desc_f64(
-            left.io_bytes_per_second_avg,
-            right.io_bytes_per_second_avg,
-        ),
+        SortBy::IoAvg => desc_f64(left.io_bytes_per_second_avg, right.io_bytes_per_second_avg),
         SortBy::Pid => left
             .pid
             .unwrap_or(u32::MAX)

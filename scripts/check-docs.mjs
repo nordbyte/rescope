@@ -18,6 +18,9 @@ const requiredFiles = [
   "commands/snapshot.md",
   "commands/live.md",
   "commands/record.md",
+  "commands/tree.md",
+  "commands/watch.md",
+  "commands/diff.md",
   "commands/help-version.md",
   "reference/options.md",
   "reference/metrics.md",
@@ -27,7 +30,7 @@ const requiredFiles = [
   "internals/development.md",
   "internals/github-pages.md"
 ];
-const commandPages = ["snapshot", "live", "record", "help-version"];
+const commandPages = ["snapshot", "live", "record", "tree", "watch", "diff", "help-version"];
 
 let failed = false;
 
@@ -48,22 +51,29 @@ for (const option of [
   "--normalize-cpu",
   "--json",
   "--csv",
+  "--csv-stream",
   "--group",
   "--cmd",
   "--cmd-regex",
   "--config",
   "--exe",
   "--exe-regex",
+  "--exit-code",
+  "--jsonl",
   "--name-regex",
+  "--no-system",
   "--parent",
   "--parent-name",
   "--parent-regex",
+  "--path",
   "--profile",
   "--min-cpu",
   "--min-ram",
   "--min-io",
   "--invert",
-  "--show-command"
+  "--show-command",
+  "--show-path",
+  "--stream"
 ]) {
   const optionPattern = new RegExp(`\`${escapeRegExp(option)}(?:\`|\\s)`);
   if (!optionPattern.test(options)) {

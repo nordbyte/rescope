@@ -64,14 +64,61 @@ Profiles select practical defaults for group, sort and command display:
 ## Sorting
 
 ```text
---sort <cpu|ram|read|write|io|pid|name|user>
+--sort <cpu|cpu-max|cpu-p95|ram|ram-avg|ram-end|read|write|io|io-avg|pid|name|user|started|exited>
 ```
+
+For snapshot, live, tree and watch, aggregate-only sort modes map to the nearest current-sample value. For recordings, the extra modes select recording aggregates:
+
+- `cpu-max` maximum CPU
+- `cpu-p95` p95 CPU
+- `ram-avg` average RAM
+- `ram-end` RAM at the last sample
+- `io-avg` average combined I/O per second
+- `started` process identities that appeared during the recording
+- `exited` process identities that disappeared before the recording ended
 
 ## Output size and CPU display
 
 - `--limit <N>` limits visible rows.
 - `--all` disables truncation. For `record`, it also includes idle rows.
 - `--normalize-cpu` displays process CPU as a share of all logical CPUs.
+
+## Command-specific options
+
+### snapshot
+
+- `--show-system` prints the system summary.
+- `--no-system` hides the system summary.
+
+### live
+
+- `--once` renders one sample and exits.
+- `--tui` starts the interactive terminal UI when a TTY is available.
+- `--plain` forces plain refresh mode.
+- `--jsonl <PATH>` streams newline-delimited JSON snapshots. Use `-` for stdout with `--quiet`.
+- `--csv-stream <PATH>` streams snapshot rows as CSV. Use `-` for stdout with `--quiet`.
+
+### record
+
+- `--duration <DURATION>` recording duration, default `30s`.
+- `--timeline <N>` number of RAM timeline rows in terminal output.
+- `--include-idle` keeps rows with no observed CPU, I/O or RAM movement.
+
+### tree
+
+- `--limit <N>` maximum process nodes to print, default `100`.
+- `--all` prints every matching node.
+
+### watch
+
+- `--duration <DURATION>` maximum watch duration, default `30s`.
+- `--stream` prints every matching sample until the duration ends.
+- `--exit-code <1-255>` exit code when filters match, default `10`.
+
+### diff
+
+- `--limit <N>` maximum changed rows, default `20`.
+- `--all` keeps every changed row.
 
 ## Durations
 
@@ -92,4 +139,22 @@ The config file is JSON and supports global defaults plus common command default
 }
 ```
 
-Supported fields are `color`, `no_color`, `bytes`, `quiet`, `profile`, `group`, `sort`, `limit`, `interval`, `normalize_cpu`, `show_command`, `show_path`, `hide_self` and `include_idle`.
+Supported top-level fields are `color`, `no_color`, `bytes`, `quiet`, `profile`, `group`, `sort`, `limit`, `interval`, `normalize_cpu`, `show_command`, `show_path`, `hide_self`, `include_idle`, `pids`, `users`, `process`, `names`, `name_regexes`, `command`, `command_regexes`, `executable`, `executable_regexes`, `parent_pids`, `parent_names`, `parent_regexes`, `min_cpu`, `min_ram`, `min_io`, `invert`, `duration`, `timeline`, `all`, `show_system`, `once`, `tui`, `plain`, `jsonl`, `csv_stream`, `stream` and `exit_code`.
+
+Command-specific overlays can override those defaults under `snapshot`, `live`, `record`, `tree` and `watch`:
+
+```json
+{
+  "limit": 20,
+  "hide_self": true,
+  "live": {
+    "tui": true,
+    "jsonl": "live.jsonl"
+  },
+  "watch": {
+    "duration": "5m",
+    "exit_code": 20,
+    "min_cpu": 80
+  }
+}
+```

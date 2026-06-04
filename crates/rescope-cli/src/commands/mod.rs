@@ -1,6 +1,9 @@
+pub mod diff;
 pub mod live;
 pub mod record;
 pub mod snapshot;
+pub mod tree;
+pub mod watch;
 
 use anyhow::Result;
 
@@ -11,6 +14,9 @@ pub fn run(cli: Cli) -> Result<()> {
         Some(Command::Snapshot(args)) => snapshot::run(&cli, &args),
         Some(Command::Live(args)) => live::run(&cli, &args),
         Some(Command::Record(args)) => record::run(&cli, &args),
+        Some(Command::Tree(args)) => tree::run(&cli, &args),
+        Some(Command::Watch(args)) => watch::run(&cli, &args),
+        Some(Command::Diff(args)) => diff::run(&cli, &args),
         None => {
             let args = LiveArgs {
                 filters: Default::default(),
@@ -24,6 +30,8 @@ pub fn run(cli: Cli) -> Result<()> {
                 once: false,
                 tui: false,
                 plain: true,
+                jsonl: None,
+                csv_stream: None,
             };
             live::run(&cli, &args)
         }

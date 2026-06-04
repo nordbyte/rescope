@@ -70,3 +70,23 @@ Stream JSON to another program:
 ```bash
 rescope live --once --json - | jq '.rows[0]'
 ```
+
+Stream continuous live data:
+
+```bash
+rescope live --quiet --jsonl live.jsonl
+rescope live --quiet --csv-stream live.csv
+```
+
+Inspect process ancestry and subtree totals:
+
+```bash
+rescope tree --process node --show-path
+```
+
+Watch for a threshold and compare reports:
+
+```bash
+rescope watch --name postgres --min-cpu 80 --duration 5m
+rescope diff before.json after.json
+```

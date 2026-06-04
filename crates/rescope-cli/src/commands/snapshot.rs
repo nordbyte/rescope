@@ -68,7 +68,7 @@ pub fn run(cli: &Cli, args: &SnapshotArgs) -> Result<()> {
         table::print_snapshot(
             &report,
             cli.bytes,
-            args.show_system || !cli.quiet,
+            !args.no_system && (args.show_system || !cli.quiet),
             cli.color_enabled(),
         );
     }

@@ -15,8 +15,10 @@ Use the README for the first install and quick start. Full documentation is avai
 - Approximate recording percentiles for CPU, RAM and combined I/O plus started/exited process counts.
 - Live views in plain refresh mode or interactive terminal mode.
 - Time-bounded recording reports from the CLI or directly from the interactive TUI.
+- Parent-child process trees with subtree CPU, RAM and I/O totals.
+- Alert-style watch mode and JSON report diffs for before/after comparisons.
 - TUI menus for sorting, grouping, filters, column visibility, sampling, recording, exports and frozen/following details.
-- JSON and CSV exports to files or stdout.
+- JSON, JSONL and CSV exports to files or stdout.
 
 ## Install
 
@@ -63,9 +65,13 @@ rescope snapshot --profile tree --parent-name systemd
 rescope live --tui --group command --sort cpu
 rescope live --tui --profile io
 rescope live --once --json -
+rescope live --quiet --jsonl live.jsonl
 rescope record --duration 1m --interval 1s --group user
 rescope record --duration 30s --profile memory --include-idle
 rescope record --duration 30s --name node --json report.json --csv report.csv
+rescope tree --process postgres --show-path
+rescope watch --name postgres --min-cpu 80 --duration 5m
+rescope diff before.json after.json
 ```
 
 Running `rescope` without a subcommand is equivalent to `rescope live`.
@@ -81,6 +87,8 @@ Profiles are available with `--profile cpu|memory|io|commands|users|tree`. A JSO
   "hide_self": true
 }
 ```
+
+Command-specific config sections are available as `snapshot`, `live`, `record`, `tree` and `watch`.
 
 Use it with:
 
@@ -103,6 +111,8 @@ CPU values can exceed `100%` on multi-core systems. Use `--normalize-cpu` to dis
 RAM is resident memory when the platform exposes it that way. Disk I/O is platform-dependent: cached operations may not increase counters on Unix-like systems, and Windows counters may include non-disk I/O depending on the OS API.
 
 Recording reports are aggregated as samples arrive and hide rows with no CPU, I/O or RAM movement by default. Use `--include-idle` to keep the current limit and include them, or `--all` to include every row.
+
+Process details such as status, runtime, accumulated CPU time, thread count, open file count and Linux cgroup path are included when the platform exposes them.
 
 ## Documentation
 

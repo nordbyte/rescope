@@ -118,9 +118,22 @@ impl Cli {
         }
 
         match &mut self.command {
-            Some(Command::Snapshot(args)) => apply_snapshot_config(args, &config)?,
-            Some(Command::Live(args)) => apply_live_config(args, &config)?,
-            Some(Command::Record(args)) => apply_record_config(args, &config)?,
+            Some(Command::Snapshot(args)) => {
+                apply_snapshot_config(args, &config.with_overlay(config.snapshot.as_ref()))?
+            }
+            Some(Command::Live(args)) => {
+                apply_live_config(args, &config.with_overlay(config.live.as_ref()))?
+            }
+            Some(Command::Record(args)) => {
+                apply_record_config(args, &config.with_overlay(config.record.as_ref()))?
+            }
+            Some(Command::Tree(args)) => {
+                apply_tree_config(args, &config.with_overlay(config.tree.as_ref()))?
+            }
+            Some(Command::Watch(args)) => {
+                apply_watch_config(args, &config.with_overlay(config.watch.as_ref()))?
+            }
+            Some(Command::Diff(_)) => {}
             None => {}
         }
 
@@ -145,6 +158,134 @@ pub struct CliConfig {
     pub show_path: Option<bool>,
     pub hide_self: Option<bool>,
     pub include_idle: Option<bool>,
+    pub pids: Option<Vec<u32>>,
+    pub users: Option<Vec<String>>,
+    pub process: Option<Vec<String>>,
+    pub names: Option<Vec<String>>,
+    pub name_regexes: Option<Vec<String>>,
+    pub command: Option<Vec<String>>,
+    pub command_regexes: Option<Vec<String>>,
+    pub executable: Option<Vec<String>>,
+    pub executable_regexes: Option<Vec<String>>,
+    pub parent_pids: Option<Vec<u32>>,
+    pub parent_names: Option<Vec<String>>,
+    pub parent_regexes: Option<Vec<String>>,
+    pub min_cpu: Option<f32>,
+    pub min_ram: Option<String>,
+    pub min_io: Option<String>,
+    pub invert: Option<bool>,
+    pub duration: Option<String>,
+    pub timeline: Option<usize>,
+    pub all: Option<bool>,
+    pub show_system: Option<bool>,
+    pub once: Option<bool>,
+    pub tui: Option<bool>,
+    pub plain: Option<bool>,
+    pub jsonl: Option<PathBuf>,
+    pub csv_stream: Option<PathBuf>,
+    pub stream: Option<bool>,
+    pub exit_code: Option<u8>,
+    pub snapshot: Option<ConfigOverlay>,
+    pub live: Option<ConfigOverlay>,
+    pub record: Option<ConfigOverlay>,
+    pub tree: Option<ConfigOverlay>,
+    pub watch: Option<ConfigOverlay>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "snake_case")]
+pub struct ConfigOverlay {
+    pub profile: Option<CliProfile>,
+    pub group: Option<CliGroupBy>,
+    pub sort: Option<CliSortBy>,
+    pub limit: Option<usize>,
+    pub interval: Option<String>,
+    pub normalize_cpu: Option<bool>,
+    pub show_command: Option<bool>,
+    pub show_path: Option<bool>,
+    pub hide_self: Option<bool>,
+    pub include_idle: Option<bool>,
+    pub pids: Option<Vec<u32>>,
+    pub users: Option<Vec<String>>,
+    pub process: Option<Vec<String>>,
+    pub names: Option<Vec<String>>,
+    pub name_regexes: Option<Vec<String>>,
+    pub command: Option<Vec<String>>,
+    pub command_regexes: Option<Vec<String>>,
+    pub executable: Option<Vec<String>>,
+    pub executable_regexes: Option<Vec<String>>,
+    pub parent_pids: Option<Vec<u32>>,
+    pub parent_names: Option<Vec<String>>,
+    pub parent_regexes: Option<Vec<String>>,
+    pub min_cpu: Option<f32>,
+    pub min_ram: Option<String>,
+    pub min_io: Option<String>,
+    pub invert: Option<bool>,
+    pub duration: Option<String>,
+    pub timeline: Option<usize>,
+    pub all: Option<bool>,
+    pub show_system: Option<bool>,
+    pub once: Option<bool>,
+    pub tui: Option<bool>,
+    pub plain: Option<bool>,
+    pub jsonl: Option<PathBuf>,
+    pub csv_stream: Option<PathBuf>,
+    pub stream: Option<bool>,
+    pub exit_code: Option<u8>,
+}
+
+impl CliConfig {
+    fn with_overlay(&self, overlay: Option<&ConfigOverlay>) -> Self {
+        let mut merged = self.clone();
+        if let Some(overlay) = overlay {
+            merged.profile = overlay.profile.or(merged.profile);
+            merged.group = overlay.group.or(merged.group);
+            merged.sort = overlay.sort.or(merged.sort);
+            merged.limit = overlay.limit.or(merged.limit);
+            merged.interval = overlay.interval.clone().or(merged.interval);
+            merged.normalize_cpu = overlay.normalize_cpu.or(merged.normalize_cpu);
+            merged.show_command = overlay.show_command.or(merged.show_command);
+            merged.show_path = overlay.show_path.or(merged.show_path);
+            merged.hide_self = overlay.hide_self.or(merged.hide_self);
+            merged.include_idle = overlay.include_idle.or(merged.include_idle);
+            merged.pids = overlay.pids.clone().or(merged.pids);
+            merged.users = overlay.users.clone().or(merged.users);
+            merged.process = overlay.process.clone().or(merged.process);
+            merged.names = overlay.names.clone().or(merged.names);
+            merged.name_regexes = overlay.name_regexes.clone().or(merged.name_regexes);
+            merged.command = overlay.command.clone().or(merged.command);
+            merged.command_regexes = overlay.command_regexes.clone().or(merged.command_regexes);
+            merged.executable = overlay.executable.clone().or(merged.executable);
+            merged.executable_regexes = overlay
+                .executable_regexes
+                .clone()
+                .or(merged.executable_regexes);
+            merged.parent_pids = overlay.parent_pids.clone().or(merged.parent_pids);
+            merged.parent_names = overlay.parent_names.clone().or(merged.parent_names);
+            merged.parent_regexes = overlay.parent_regexes.clone().or(merged.parent_regexes);
+            merged.min_cpu = overlay.min_cpu.or(merged.min_cpu);
+            merged.min_ram = overlay.min_ram.clone().or(merged.min_ram);
+            merged.min_io = overlay.min_io.clone().or(merged.min_io);
+            merged.invert = overlay.invert.or(merged.invert);
+            merged.duration = overlay.duration.clone().or(merged.duration);
+            merged.timeline = overlay.timeline.or(merged.timeline);
+            merged.all = overlay.all.or(merged.all);
+            merged.show_system = overlay.show_system.or(merged.show_system);
+            merged.once = overlay.once.or(merged.once);
+            merged.tui = overlay.tui.or(merged.tui);
+            merged.plain = overlay.plain.or(merged.plain);
+            merged.jsonl = overlay.jsonl.clone().or(merged.jsonl);
+            merged.csv_stream = overlay.csv_stream.clone().or(merged.csv_stream);
+            merged.stream = overlay.stream.or(merged.stream);
+            merged.exit_code = overlay.exit_code.or(merged.exit_code);
+        }
+        merged.snapshot = None;
+        merged.live = None;
+        merged.record = None;
+        merged.tree = None;
+        merged.watch = None;
+        merged
+    }
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -152,6 +293,9 @@ pub enum Command {
     Snapshot(SnapshotArgs),
     Live(LiveArgs),
     Record(RecordArgs),
+    Tree(TreeArgs),
+    Watch(WatchArgs),
+    Diff(DiffArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -196,6 +340,9 @@ pub struct SnapshotArgs {
 
     #[arg(long, help = "Print system summary before the process table")]
     pub show_system: bool,
+
+    #[arg(long, help = "Hide the system summary before the process table")]
+    pub no_system: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -246,6 +393,18 @@ pub struct LiveArgs {
 
     #[arg(long, help = "Force plain terminal refresh mode")]
     pub plain: bool,
+
+    #[arg(
+        long,
+        help = "Stream newline-delimited JSON snapshots to a file or '-' for stdout"
+    )]
+    pub jsonl: Option<PathBuf>,
+
+    #[arg(
+        long = "csv-stream",
+        help = "Stream CSV snapshot rows to a file or '-' for stdout"
+    )]
+    pub csv_stream: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -253,7 +412,7 @@ pub struct RecordArgs {
     #[command(flatten)]
     pub filters: FilterArgs,
 
-    #[arg(long, value_parser = parse_duration_arg, help = "Recording duration, for example 30s or 5m")]
+    #[arg(long, default_value = "30s", value_parser = parse_duration_arg, help = "Recording duration, for example 30s or 5m")]
     pub duration: Duration,
 
     #[arg(
@@ -291,6 +450,75 @@ pub struct RecordArgs {
 
     #[arg(long, help = "Keep rows without CPU, I/O, or RAM delta activity")]
     pub include_idle: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct TreeArgs {
+    #[command(flatten)]
+    pub filters: FilterArgs,
+
+    #[arg(long, default_value = "1s", value_parser = parse_duration_arg, help = "Sampling interval used for CPU and I/O deltas")]
+    pub interval: Duration,
+
+    #[arg(long, value_enum, default_value = "cpu", help = "Sort sibling nodes")]
+    pub sort: CliSortBy,
+
+    #[arg(long, default_value_t = 100, value_parser = parse_limit, help = "Maximum process nodes to print")]
+    pub limit: usize,
+
+    #[arg(long, help = "Show every matching node")]
+    pub all: bool,
+
+    #[arg(long, help = "Normalize CPU percentages to one logical CPU")]
+    pub normalize_cpu: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct WatchArgs {
+    #[command(flatten)]
+    pub filters: FilterArgs,
+
+    #[arg(long, default_value = "30s", value_parser = parse_duration_arg, help = "Maximum watch duration")]
+    pub duration: Duration,
+
+    #[arg(long, default_value = "1s", value_parser = parse_duration_arg, help = "Sampling interval")]
+    pub interval: Duration,
+
+    #[arg(long, value_enum, default_value = "cpu", help = "Sort matching rows")]
+    pub sort: CliSortBy,
+
+    #[arg(long, default_value_t = 20, value_parser = parse_limit, help = "Maximum rows to print when a match is found")]
+    pub limit: usize,
+
+    #[arg(long, help = "Show all matching rows instead of applying --limit")]
+    pub all: bool,
+
+    #[arg(long, default_value_t = 10, value_parser = parse_exit_code, help = "Process exit code when the alert matches")]
+    pub exit_code: u8,
+
+    #[arg(
+        long,
+        help = "Print every sample instead of only the first matching sample"
+    )]
+    pub stream: bool,
+
+    #[arg(long, help = "Normalize CPU percentages to one logical CPU")]
+    pub normalize_cpu: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct DiffArgs {
+    #[arg(help = "Older rescope JSON report")]
+    pub before: PathBuf,
+
+    #[arg(help = "Newer rescope JSON report")]
+    pub after: PathBuf,
+
+    #[arg(long, default_value_t = 20, value_parser = parse_limit, help = "Maximum diff rows to print")]
+    pub limit: usize,
+
+    #[arg(long, help = "Show all changed rows")]
+    pub all: bool,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -487,7 +715,19 @@ fn apply_snapshot_config(args: &mut SnapshotArgs, config: &CliConfig) -> AnyhowR
         &mut args.normalize_cpu,
         config,
         CliSortBy::Cpu,
-    )
+    )?;
+    if !args.all
+        && let Some(all) = config.all
+    {
+        args.all = all;
+    }
+    if !args.show_system
+        && let Some(show_system) = config.show_system
+    {
+        args.show_system = show_system;
+        args.no_system = !show_system;
+    }
+    Ok(())
 }
 
 fn apply_live_config(args: &mut LiveArgs, config: &CliConfig) -> AnyhowResult<()> {
@@ -501,7 +741,34 @@ fn apply_live_config(args: &mut LiveArgs, config: &CliConfig) -> AnyhowResult<()
         &mut args.normalize_cpu,
         config,
         CliSortBy::Cpu,
-    )
+    )?;
+    if !args.all
+        && let Some(all) = config.all
+    {
+        args.all = all;
+    }
+    if !args.once
+        && let Some(once) = config.once
+    {
+        args.once = once;
+    }
+    if !args.tui
+        && let Some(tui) = config.tui
+    {
+        args.tui = tui;
+    }
+    if !args.plain
+        && let Some(plain) = config.plain
+    {
+        args.plain = plain;
+    }
+    if args.jsonl.is_none() {
+        args.jsonl = config.jsonl.clone();
+    }
+    if args.csv_stream.is_none() {
+        args.csv_stream = config.csv_stream.clone();
+    }
+    Ok(())
 }
 
 fn apply_record_config(args: &mut RecordArgs, config: &CliConfig) -> AnyhowResult<()> {
@@ -521,6 +788,96 @@ fn apply_record_config(args: &mut RecordArgs, config: &CliConfig) -> AnyhowResul
     {
         args.include_idle = include_idle;
     }
+    if !args.all
+        && let Some(all) = config.all
+    {
+        args.all = all;
+    }
+    if args.duration == Duration::from_secs(30)
+        && let Some(duration) = &config.duration
+    {
+        args.duration = parse_duration_arg(duration)?;
+    }
+    if args.timeline == 5
+        && let Some(timeline) = config.timeline
+    {
+        args.timeline = timeline;
+    }
+    Ok(())
+}
+
+fn apply_tree_config(args: &mut TreeArgs, config: &CliConfig) -> AnyhowResult<()> {
+    if args.sort == CliSortBy::Cpu
+        && let Some(config_sort) = config.sort
+    {
+        args.sort = config_sort;
+    }
+    if args.limit == 100
+        && let Some(config_limit) = config.limit
+    {
+        args.limit = parse_limit(&config_limit.to_string())?;
+    }
+    if args.interval == Duration::from_secs(1)
+        && let Some(config_interval) = &config.interval
+    {
+        args.interval = parse_duration_arg(config_interval)?;
+    }
+    if !args.normalize_cpu
+        && let Some(config_normalize_cpu) = config.normalize_cpu
+    {
+        args.normalize_cpu = config_normalize_cpu;
+    }
+    if !args.all
+        && let Some(all) = config.all
+    {
+        args.all = all;
+    }
+    apply_filter_config(&mut args.filters, config)?;
+    Ok(())
+}
+
+fn apply_watch_config(args: &mut WatchArgs, config: &CliConfig) -> AnyhowResult<()> {
+    if args.sort == CliSortBy::Cpu
+        && let Some(config_sort) = config.sort
+    {
+        args.sort = config_sort;
+    }
+    if args.limit == 20
+        && let Some(config_limit) = config.limit
+    {
+        args.limit = parse_limit(&config_limit.to_string())?;
+    }
+    if args.interval == Duration::from_secs(1)
+        && let Some(config_interval) = &config.interval
+    {
+        args.interval = parse_duration_arg(config_interval)?;
+    }
+    if !args.normalize_cpu
+        && let Some(config_normalize_cpu) = config.normalize_cpu
+    {
+        args.normalize_cpu = config_normalize_cpu;
+    }
+    if args.duration == Duration::from_secs(30)
+        && let Some(duration) = &config.duration
+    {
+        args.duration = parse_duration_arg(duration)?;
+    }
+    if !args.all
+        && let Some(all) = config.all
+    {
+        args.all = all;
+    }
+    if !args.stream
+        && let Some(stream) = config.stream
+    {
+        args.stream = stream;
+    }
+    if args.exit_code == 10
+        && let Some(exit_code) = config.exit_code
+    {
+        args.exit_code = parse_exit_code(&exit_code.to_string()).map_err(anyhow::Error::msg)?;
+    }
+    apply_filter_config(&mut args.filters, config)?;
     Ok(())
 }
 
@@ -577,6 +934,116 @@ fn apply_common_config(
     {
         filters.hide_self = hide_self;
     }
+    apply_filter_config(filters, config)?;
+    Ok(())
+}
+
+fn apply_filter_config(filters: &mut FilterArgs, config: &CliConfig) -> AnyhowResult<()> {
+    if filters.pids.is_empty()
+        && let Some(pids) = &config.pids
+    {
+        filters.pids = pids.clone();
+    }
+    if filters.users.is_empty()
+        && let Some(users) = &config.users
+    {
+        filters.users = users.clone();
+    }
+    if filters.process_substrings.is_empty()
+        && let Some(process) = &config.process
+    {
+        filters.process_substrings = process.clone();
+    }
+    if filters.names.is_empty()
+        && let Some(names) = &config.names
+    {
+        filters.names = names.clone();
+    }
+    if filters.name_regexes.is_empty()
+        && let Some(regexes) = &config.name_regexes
+    {
+        for regex in regexes {
+            parse_regex_arg(regex).map_err(anyhow::Error::msg)?;
+        }
+        filters.name_regexes = regexes.clone();
+    }
+    if filters.command_substrings.is_empty()
+        && let Some(command) = &config.command
+    {
+        filters.command_substrings = command.clone();
+    }
+    if filters.command_regexes.is_empty()
+        && let Some(regexes) = &config.command_regexes
+    {
+        for regex in regexes {
+            parse_regex_arg(regex).map_err(anyhow::Error::msg)?;
+        }
+        filters.command_regexes = regexes.clone();
+    }
+    if filters.executable_substrings.is_empty()
+        && let Some(executable) = &config.executable
+    {
+        filters.executable_substrings = executable.clone();
+    }
+    if filters.executable_regexes.is_empty()
+        && let Some(regexes) = &config.executable_regexes
+    {
+        for regex in regexes {
+            parse_regex_arg(regex).map_err(anyhow::Error::msg)?;
+        }
+        filters.executable_regexes = regexes.clone();
+    }
+    if filters.parent_pids.is_empty()
+        && let Some(parent_pids) = &config.parent_pids
+    {
+        filters.parent_pids = parent_pids.clone();
+    }
+    if filters.parent_names.is_empty()
+        && let Some(parent_names) = &config.parent_names
+    {
+        filters.parent_names = parent_names.clone();
+    }
+    if filters.parent_regexes.is_empty()
+        && let Some(regexes) = &config.parent_regexes
+    {
+        for regex in regexes {
+            parse_regex_arg(regex).map_err(anyhow::Error::msg)?;
+        }
+        filters.parent_regexes = regexes.clone();
+    }
+    if filters.min_cpu.is_none() {
+        filters.min_cpu = config.min_cpu;
+    }
+    if filters.min_ram.is_none()
+        && let Some(min_ram) = &config.min_ram
+    {
+        filters.min_ram = Some(parse_size_arg(min_ram).map_err(anyhow::Error::msg)?);
+    }
+    if filters.min_io.is_none()
+        && let Some(min_io) = &config.min_io
+    {
+        filters.min_io = Some(parse_size_arg(min_io).map_err(anyhow::Error::msg)?);
+    }
+    if !filters.invert
+        && let Some(invert) = config.invert
+    {
+        filters.invert = invert;
+    }
+    if !filters.show_command
+        && let Some(show_command) = config.show_command
+    {
+        filters.show_command = show_command;
+    }
+    if !filters.show_path
+        && let Some(show_path) = config.show_path
+    {
+        filters.show_path = show_path;
+    }
+    if !filters.hide_self
+        && let Some(hide_self) = config.hide_self
+    {
+        filters.hide_self = hide_self;
+    }
     Ok(())
 }
 
@@ -615,6 +1082,17 @@ fn parse_limit(input: &str) -> Result<usize, RescopeError> {
         Err(RescopeError::InvalidLimit)
     } else {
         Ok(limit)
+    }
+}
+
+fn parse_exit_code(input: &str) -> Result<u8, String> {
+    let value = input
+        .parse::<u8>()
+        .map_err(|_| format!("invalid exit code \"{input}\""))?;
+    if value == 0 {
+        Err("exit code must be between 1 and 255".to_string())
+    } else {
+        Ok(value)
     }
 }
 
@@ -802,6 +1280,58 @@ impl RecordArgs {
 
     pub fn effective_show_command(&self) -> bool {
         self.filters.show_command || self.profile.is_some_and(CliProfile::show_command)
+    }
+
+    pub fn effective_show_path(&self) -> bool {
+        self.filters.show_path
+    }
+}
+
+impl TreeArgs {
+    pub fn effective_limit(&self) -> usize {
+        if self.all { usize::MAX } else { self.limit }
+    }
+
+    pub fn needs_command(&self) -> bool {
+        self.filters.needs_command() || self.filters.show_command
+    }
+
+    pub fn needs_executable(&self) -> bool {
+        self.filters.needs_executable() || self.filters.show_path
+    }
+
+    pub fn effective_sort(&self) -> SortBy {
+        self.sort.into()
+    }
+
+    pub fn effective_show_command(&self) -> bool {
+        self.filters.show_command
+    }
+
+    pub fn effective_show_path(&self) -> bool {
+        self.filters.show_path
+    }
+}
+
+impl WatchArgs {
+    pub fn effective_limit(&self) -> usize {
+        if self.all { usize::MAX } else { self.limit }
+    }
+
+    pub fn needs_command(&self) -> bool {
+        self.filters.needs_command() || self.filters.show_command
+    }
+
+    pub fn needs_executable(&self) -> bool {
+        self.filters.needs_executable() || self.filters.show_path
+    }
+
+    pub fn effective_sort(&self) -> SortBy {
+        self.sort.into()
+    }
+
+    pub fn effective_show_command(&self) -> bool {
+        self.filters.show_command
     }
 
     pub fn effective_show_path(&self) -> bool {

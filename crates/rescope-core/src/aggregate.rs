@@ -265,7 +265,9 @@ fn metric_contribution(process: &RawProcessSample, sort_by: SortBy) -> f64 {
             (process.disk_read_delta_bytes + process.disk_write_delta_bytes) as f64
         }
         SortBy::Pid => process.identity.pid as f64,
-        SortBy::Name | SortBy::User | SortBy::Started | SortBy::Exited => process.cpu_percent as f64,
+        SortBy::Name | SortBy::User | SortBy::Started | SortBy::Exited => {
+            process.cpu_percent as f64
+        }
     }
 }
 

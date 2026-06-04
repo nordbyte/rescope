@@ -20,7 +20,10 @@ cargo test --workspace --offline
 cargo run -p rescope-cli -- snapshot --limit 5
 cargo run -p rescope-cli -- snapshot --group parent --limit 5
 cargo run -p rescope-cli -- live --once --json -
+cargo run -p rescope-cli -- live --once --quiet --jsonl -
 cargo run -p rescope-cli -- record --duration 5s --interval 1s --limit 5
+cargo run -p rescope-cli -- tree --limit 5
+cargo run -p rescope-cli -- watch --duration 1s --interval 1s --name definitely-no-such-process --quiet
 ```
 
 ## Docs

@@ -10,6 +10,8 @@ rescope live --plain --cmd server.js --min-cpu 5 --invert
 rescope snapshot --process postgres --show-path
 rescope snapshot --path /usr/bin --parent-name systemd --show-path
 rescope live --profile tree --tui
+rescope tree --parent-name systemd --sort ram
+rescope watch --process postgres --min-cpu 80
 ```
 
 The first example requires both user and name to match. The second matches either process name.
@@ -46,6 +48,8 @@ The first example requires both user and name to match. The second matches eithe
 - `--group parent`
 
 Parent grouping displays parent PID plus parent process name when available, for example `1 (systemd)`. Command grouping intentionally exposes command lines because the user explicitly requested command-line aggregation. Executable grouping displays executable paths because path grouping is explicitly requested.
+
+Use `rescope tree` when parent-child ancestry matters more than flat grouping. Tree output keeps individual process nodes and adds subtree totals for CPU, RAM and I/O.
 
 ## Profiles
 

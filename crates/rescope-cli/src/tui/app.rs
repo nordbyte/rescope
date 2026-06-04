@@ -45,9 +45,14 @@ const OPTIONS_ITEMS: [&str; 9] = [
     "Details",
     "Help",
 ];
-const FILTER_ITEMS: [&str; 8] = [
-    "Edit search",
-    "Clear search",
+const FILTER_ITEMS: [&str; 13] = [
+    "Edit live search",
+    "Edit process filter",
+    "Edit user filter",
+    "Edit name filter",
+    "Edit path filter",
+    "Edit parent filter",
+    "Clear text filters",
     "Toggle invert filters",
     "Toggle hide self",
     "Cycle min CPU",
@@ -190,6 +195,10 @@ enum Overlay {
     Search {
         input: String,
     },
+    FilterText {
+        field: FilterField,
+        input: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -202,6 +211,15 @@ enum ExportFormat {
 enum ExportTarget {
     Snapshot,
     Recording,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FilterField {
+    Process,
+    User,
+    Name,
+    Executable,
+    Parent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,6 +355,13 @@ impl TuiApp {
     fn open_search(&mut self) {
         self.overlay = Overlay::Search {
             input: self.search_query.clone(),
+        };
+    }
+
+    fn open_filter_text(&mut self, field: FilterField) {
+        self.overlay = Overlay::FilterText {
+            field,
+            input: current_filter_text(&self.filter, field),
         };
     }
 
@@ -512,6 +537,16 @@ impl TuiApp {
         self.filter.min_cpu_percent = None;
         self.filter.min_ram_bytes = None;
         self.filter.min_io_delta_bytes = None;
+    }
+
+    fn clear_text_filters(&mut self) {
+        self.search_query.clear();
+        self.filter.process_substrings.clear();
+        self.filter.users.clear();
+        self.filter.names.clear();
+        self.filter.executable_substrings.clear();
+        self.filter.parent_names.clear();
+        self.selected_row = 0;
     }
 
     fn start_recording(&mut self) {
@@ -761,7 +796,7 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> TuiIn
     let ctrl_c = code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL);
     let text_input_open = matches!(
         app.overlay,
-        Overlay::Search { .. } | Overlay::ExportPath { .. }
+        Overlay::Search { .. } | Overlay::ExportPath { .. } | Overlay::FilterText { .. }
     );
     if ctrl_c || (!text_input_open && is_quit_key(code)) {
         return TuiInput::Quit;
@@ -770,6 +805,9 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> TuiIn
     match app.overlay.clone() {
         Overlay::None => handle_main_key(app, code, modifiers),
         Overlay::Search { input } => handle_search_key(app, code, modifiers, input),
+        Overlay::FilterText { field, input } => {
+            handle_filter_text_key(app, code, modifiers, field, input)
+        }
         Overlay::ExportPath {
             target,
             format,
@@ -896,6 +934,35 @@ fn handle_search_key(
     TuiInput::RefreshNow
 }
 
+fn handle_filter_text_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    field: FilterField,
+    mut input: String,
+) -> TuiInput {
+    match code {
+        KeyCode::Esc => {
+            app.close_overlay();
+        }
+        KeyCode::Enter => {
+            set_filter_text(&mut app.filter, field, input.trim());
+            app.selected_row = 0;
+            app.close_overlay();
+        }
+        KeyCode::Backspace => {
+            input.pop();
+            app.overlay = Overlay::FilterText { field, input };
+        }
+        KeyCode::Char(ch) if plain_or_shift(modifiers) => {
+            input.push(ch);
+            app.overlay = Overlay::FilterText { field, input };
+        }
+        _ => return TuiInput::Tick,
+    }
+    TuiInput::RefreshNow
+}
+
 fn handle_simple_overlay_key(app: &mut TuiApp, code: KeyCode) -> TuiInput {
     match code {
         KeyCode::Esc | KeyCode::Enter => {
@@ -968,6 +1035,7 @@ fn move_overlay_selection(app: &mut TuiApp, direction: PickerDirection) {
         | Overlay::Help
         | Overlay::Detail { .. }
         | Overlay::Search { .. }
+        | Overlay::FilterText { .. }
         | Overlay::ExportPath { .. } => {}
     }
 }
@@ -997,16 +1065,18 @@ fn apply_overlay_selection(app: &mut TuiApp) {
         }
         Overlay::Filter { selected } => match selected {
             0 => app.open_search(),
-            1 => {
-                app.search_query.clear();
-                app.selected_row = 0;
-            }
-            2 => app.filter.invert_match = !app.filter.invert_match,
-            3 => app.filter.hide_self = !app.filter.hide_self,
-            4 => app.cycle_min_cpu(),
-            5 => app.cycle_min_ram(),
-            6 => app.cycle_min_io(),
-            7 => app.clear_thresholds(),
+            1 => app.open_filter_text(FilterField::Process),
+            2 => app.open_filter_text(FilterField::User),
+            3 => app.open_filter_text(FilterField::Name),
+            4 => app.open_filter_text(FilterField::Executable),
+            5 => app.open_filter_text(FilterField::Parent),
+            6 => app.clear_text_filters(),
+            7 => app.filter.invert_match = !app.filter.invert_match,
+            8 => app.filter.hide_self = !app.filter.hide_self,
+            9 => app.cycle_min_cpu(),
+            10 => app.cycle_min_ram(),
+            11 => app.cycle_min_io(),
+            12 => app.clear_thresholds(),
             _ => {}
         },
         Overlay::View { selected } => match selected {
@@ -1053,6 +1123,7 @@ fn apply_overlay_selection(app: &mut TuiApp) {
         | Overlay::Help
         | Overlay::Detail { .. }
         | Overlay::Search { .. }
+        | Overlay::FilterText { .. }
         | Overlay::ExportPath { .. } => {}
     }
 }
@@ -1201,6 +1272,7 @@ fn format_overlay(app: &TuiApp, color: bool) -> String {
             section_title("Search", color),
             paint(">", TuiStyle::Success, color)
         ),
+        Overlay::FilterText { field, input } => format_filter_text(*field, input, color),
     }
 }
 
@@ -1280,6 +1352,11 @@ fn format_filter_menu(selected: usize, app: &TuiApp, color: bool) -> String {
         } else {
             app.search_query.clone()
         },
+        filter_text_label(&app.filter.process_substrings),
+        filter_text_label(&app.filter.users),
+        filter_text_label(&app.filter.names),
+        filter_text_label(&app.filter.executable_substrings),
+        filter_text_label(&app.filter.parent_names),
         String::new(),
         on_off(app.filter.invert_match).to_string(),
         on_off(app.filter.hide_self).to_string(),
@@ -1289,6 +1366,15 @@ fn format_filter_menu(selected: usize, app: &TuiApp, color: bool) -> String {
         String::new(),
     ];
     format_menu("Filters", FILTER_ITEMS, selected, Some(suffixes), color)
+}
+
+fn format_filter_text(field: FilterField, input: &str, color: bool) -> String {
+    format!(
+        "{} {}\n{} {input}\n\nEnter apply | empty clears | Esc cancel\n\n",
+        section_title("Filter", color),
+        filter_field_label(field),
+        paint(">", TuiStyle::Success, color)
+    )
 }
 
 fn format_view_menu(selected: usize, app: &TuiApp, color: bool) -> String {
@@ -1454,6 +1540,30 @@ fn format_detail(app: &TuiApp, row: &SnapshotRow, follow: bool, color: bool) -> 
     if let Some(process) = &row.top_process {
         writeln!(&mut output, "{} {process}", label("top process", color))
             .expect("writing to a string cannot fail");
+    }
+    if !row.details.is_empty() {
+        writeln!(&mut output, "{}", label("details", color))
+            .expect("writing to a string cannot fail");
+        if let Some(status) = row.details.status.as_deref() {
+            writeln!(&mut output, "  status {status}").expect("writing to a string cannot fail");
+        }
+        if let Some(run_time) = row.details.run_time_seconds {
+            writeln!(
+                &mut output,
+                "  runtime {}",
+                humantime::format_duration(Duration::from_secs(run_time))
+            )
+            .expect("writing to a string cannot fail");
+        }
+        if let Some(threads) = row.details.thread_count {
+            writeln!(&mut output, "  threads {threads}").expect("writing to a string cannot fail");
+        }
+        if let Some(files) = row.details.open_file_count {
+            writeln!(&mut output, "  open files {files}").expect("writing to a string cannot fail");
+        }
+        if let Some(cgroup) = row.details.cgroup_path.as_deref() {
+            writeln!(&mut output, "  cgroup {cgroup}").expect("writing to a string cannot fail");
+        }
     }
     writeln!(
         &mut output,
@@ -1701,6 +1811,54 @@ fn threshold_bytes_label(value: Option<u64>, raw_bytes: bool) -> String {
         .unwrap_or_else(|| "none".to_string())
 }
 
+fn current_filter_text(filter: &FilterSpec, field: FilterField) -> String {
+    match field {
+        FilterField::Process => filter.process_substrings.join(","),
+        FilterField::User => filter.users.join(","),
+        FilterField::Name => filter.names.join(","),
+        FilterField::Executable => filter.executable_substrings.join(","),
+        FilterField::Parent => filter.parent_names.join(","),
+    }
+}
+
+fn set_filter_text(filter: &mut FilterSpec, field: FilterField, input: &str) {
+    let values = split_filter_values(input);
+    match field {
+        FilterField::Process => filter.process_substrings = values,
+        FilterField::User => filter.users = values,
+        FilterField::Name => filter.names = values,
+        FilterField::Executable => filter.executable_substrings = values,
+        FilterField::Parent => filter.parent_names = values,
+    }
+}
+
+fn split_filter_values(input: &str) -> Vec<String> {
+    input
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn filter_text_label(values: &[String]) -> String {
+    match values {
+        [] => "none".to_string(),
+        [single] => single.clone(),
+        [first, rest @ ..] => format!("{first},+{}", rest.len()),
+    }
+}
+
+fn filter_field_label(field: FilterField) -> &'static str {
+    match field {
+        FilterField::Process => "process",
+        FilterField::User => "user",
+        FilterField::Name => "name",
+        FilterField::Executable => "path",
+        FilterField::Parent => "parent",
+    }
+}
+
 fn filter_summary(app: &TuiApp) -> String {
     let mut active = Vec::new();
     if !app.filter.pids.is_empty() {
@@ -1882,7 +2040,7 @@ mod tests {
             handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty()),
             TuiInput::RefreshNow
         );
-        assert_eq!(app.sort_by, SortBy::Ram);
+        assert_eq!(app.sort_by, SortBy::CpuMax);
         assert!(matches!(app.overlay, Overlay::None));
     }
 
@@ -1958,17 +2116,45 @@ mod tests {
     #[test]
     fn filter_menu_cycles_thresholds_and_invert() {
         let mut app = app();
-        app.overlay = Overlay::Filter { selected: 2 };
+        app.overlay = Overlay::Filter { selected: 7 };
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
         assert!(app.filter.invert_match);
 
-        app.overlay = Overlay::Filter { selected: 4 };
+        app.overlay = Overlay::Filter { selected: 9 };
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
         assert_eq!(app.filter.min_cpu_percent, Some(1.0));
 
-        app.overlay = Overlay::Filter { selected: 7 };
+        app.overlay = Overlay::Filter { selected: 12 };
         handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
         assert_eq!(app.filter.min_cpu_percent, None);
+    }
+
+    #[test]
+    fn filter_text_overlay_applies_comma_separated_values() {
+        let mut app = app();
+        app.open_filter_text(FilterField::Process);
+        for ch in "node,bun".chars() {
+            handle_key(&mut app, KeyCode::Char(ch), KeyModifiers::empty());
+        }
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
+
+        assert_eq!(app.filter.process_substrings, ["node", "bun"]);
+        assert!(matches!(app.overlay, Overlay::None));
+    }
+
+    #[test]
+    fn q_is_text_inside_filter_text_overlay() {
+        let mut app = app();
+        app.open_filter_text(FilterField::Executable);
+
+        assert_eq!(
+            handle_key(&mut app, KeyCode::Char('q'), KeyModifiers::empty()),
+            TuiInput::RefreshNow
+        );
+        assert!(matches!(app.overlay, Overlay::FilterText { .. }));
+
+        handle_key(&mut app, KeyCode::Enter, KeyModifiers::empty());
+        assert_eq!(app.filter.executable_substrings, ["q"]);
     }
 
     #[test]

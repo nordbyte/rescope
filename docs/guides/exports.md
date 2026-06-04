@@ -1,17 +1,27 @@
 # Exports
 
-Snapshot, record and `live --once` can export JSON and CSV.
+Snapshot, record, tree, diff and `live --once` can export JSON and CSV.
 
 ```bash
 rescope snapshot --json snapshot.json
 rescope snapshot --csv snapshot.csv
 rescope record --duration 30s --json report.json --csv report.csv
 rescope live --once --json -
+rescope tree --json tree.json
+rescope --json - diff before.json after.json
 ```
 
 In `rescope live --tui`, press `e` for snapshot exports or `r` for recording exports. The TUI opens a path prompt before writing and refuses to overwrite an existing file.
 
 Recording exports include approximate percentile fields and started/exited process counts. JSON includes bounded timelines; CSV keeps one row per aggregate result.
+
+Continuous live streams use newline-delimited JSON or streaming CSV:
+
+```bash
+rescope live --quiet --jsonl live.jsonl
+rescope live --quiet --csv-stream live.csv
+rescope live --once --quiet --jsonl -
+```
 
 ## Atomic file writes
 
@@ -25,4 +35,4 @@ Use `-` to write one export to stdout:
 rescope snapshot --json - | jq '.rows | length'
 ```
 
-Only one of `--json -` or `--csv -` can be used at a time.
+Only one stdout export can be used at a time. For continuous live streams, use `--quiet` when `--jsonl -` or `--csv-stream -` writes to stdout.

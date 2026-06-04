@@ -3,7 +3,7 @@
 Measure a bounded duration and print an aggregate report.
 
 ```bash
-rescope record --duration <DURATION> [OPTIONS]
+rescope record [OPTIONS]
 ```
 
 ## Examples
@@ -18,7 +18,7 @@ rescope record --duration 5m --include-idle --all
 
 ## Options
 
-- `--duration <DURATION>` required, accepts `ms`, `s`, `m`, `h`
+- `--duration <DURATION>` accepts `ms`, `s`, `m`, `h`; default `30s`
 - `--interval <DURATION>` sample interval, default `1s`, minimum `250ms`
 - `--timeline <N>` number of RAM sparkline rows in terminal output
 - `--include-idle` include rows with no observed CPU, I/O or RAM movement
@@ -26,4 +26,4 @@ rescope record --duration 5m --include-idle --all
 - `--normalize-cpu` display CPU divided by logical CPU count
 
 Common filters, grouping and exports are documented in [CLI options](../reference/options.md).
-Recording reports include approximate CPU/RAM/I/O percentiles and started/exited process counts.
+Recording reports include approximate CPU/RAM/I/O percentiles, process details and started/exited process counts.
