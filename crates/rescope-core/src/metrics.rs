@@ -17,13 +17,20 @@ pub enum GroupBy {
 #[serde(rename_all = "snake_case")]
 pub enum SortBy {
     Cpu,
+    CpuMax,
+    CpuP95,
     Ram,
+    RamAvg,
+    RamEnd,
     Read,
     Write,
     Io,
+    IoAvg,
     Pid,
     Name,
     User,
+    Started,
+    Exited,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -54,6 +61,33 @@ pub struct ProcessIdentity {
     pub name: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProcessDetails {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_time_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accumulated_cpu_time_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_file_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cgroup_path: Option<String>,
+}
+
+impl ProcessDetails {
+    pub fn is_empty(&self) -> bool {
+        self.status.is_none()
+            && self.run_time_seconds.is_none()
+            && self.accumulated_cpu_time_ms.is_none()
+            && self.thread_count.is_none()
+            && self.open_file_count.is_none()
+            && self.cgroup_path.is_none()
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RawProcessSample {
     #[serde(serialize_with = "serialize_system_time_ms")]
@@ -75,6 +109,8 @@ pub struct RawProcessSample {
     pub disk_total_write_bytes: u64,
     pub disk_read_delta_bytes: u64,
     pub disk_write_delta_bytes: u64,
+    #[serde(skip_serializing_if = "ProcessDetails::is_empty")]
+    pub details: ProcessDetails,
 }
 
 impl RawProcessSample {
@@ -153,6 +189,8 @@ pub struct SnapshotRow {
     pub write_bps: f64,
     pub io_bps: f64,
     pub top_process: Option<String>,
+    #[serde(skip_serializing_if = "ProcessDetails::is_empty")]
+    pub details: ProcessDetails,
     #[serde(serialize_with = "serialize_system_time_ms")]
     pub timestamp: SystemTime,
 }
@@ -204,6 +242,8 @@ pub struct AggregateRow {
     pub read_timeline: Vec<(SystemTime, u64)>,
     #[serde(serialize_with = "serialize_timeline_ms")]
     pub write_timeline: Vec<(SystemTime, u64)>,
+    #[serde(skip_serializing_if = "ProcessDetails::is_empty")]
+    pub details: ProcessDetails,
 }
 
 #[derive(Debug, Clone, Serialize)]

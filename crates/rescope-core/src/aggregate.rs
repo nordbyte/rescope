@@ -2,8 +2,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, SystemTime};
 
 use crate::metrics::{
-    AggregateRow, GroupBy, GroupKey, ProcessIdentity, RawProcessSample, SnapshotRow, SortBy,
-    SystemSample,
+    AggregateRow, GroupBy, GroupKey, ProcessDetails, ProcessIdentity, RawProcessSample,
+    SnapshotRow, SortBy, SystemSample,
 };
 use crate::sort::{sort_recording_rows_limit, sort_snapshot_rows_limit};
 
@@ -257,13 +257,15 @@ fn summarize_users(users: &BTreeSet<String>) -> Option<String> {
 
 fn metric_contribution(process: &RawProcessSample, sort_by: SortBy) -> f64 {
     match sort_by {
-        SortBy::Cpu => process.cpu_percent as f64,
-        SortBy::Ram => process.memory_bytes as f64,
+        SortBy::Cpu | SortBy::CpuMax | SortBy::CpuP95 => process.cpu_percent as f64,
+        SortBy::Ram | SortBy::RamAvg | SortBy::RamEnd => process.memory_bytes as f64,
         SortBy::Read => process.disk_read_delta_bytes as f64,
         SortBy::Write => process.disk_write_delta_bytes as f64,
-        SortBy::Io => (process.disk_read_delta_bytes + process.disk_write_delta_bytes) as f64,
+        SortBy::Io | SortBy::IoAvg => {
+            (process.disk_read_delta_bytes + process.disk_write_delta_bytes) as f64
+        }
         SortBy::Pid => process.identity.pid as f64,
-        SortBy::Name | SortBy::User => process.cpu_percent as f64,
+        SortBy::Name | SortBy::User | SortBy::Started | SortBy::Exited => process.cpu_percent as f64,
     }
 }
 
@@ -283,6 +285,7 @@ struct SnapshotAcc {
     disk_read_delta_bytes: u64,
     disk_write_delta_bytes: u64,
     top_process: Option<(String, f64)>,
+    details: ProcessDetails,
     timestamp: SystemTime,
 }
 
@@ -312,6 +315,9 @@ impl SnapshotAcc {
             disk_read_delta_bytes: 0,
             disk_write_delta_bytes: 0,
             top_process: None,
+            details: matches!(group_type, GroupBy::Process)
+                .then(|| process.details.clone())
+                .unwrap_or_default(),
             timestamp,
         }
     }
@@ -363,6 +369,7 @@ impl SnapshotAcc {
             write_bps: self.disk_write_delta_bytes as f64 / interval_seconds,
             io_bps: disk_io_delta_bytes as f64 / interval_seconds,
             top_process: self.top_process.map(|(name, _)| name),
+            details: self.details,
             timestamp: self.timestamp,
         }
     }
@@ -382,6 +389,7 @@ struct GroupSample {
     read_delta_bytes: u64,
     write_delta_bytes: u64,
     top_process: Option<(String, f64)>,
+    details: ProcessDetails,
     timestamp: SystemTime,
 }
 
@@ -408,6 +416,9 @@ impl GroupSample {
             read_delta_bytes: 0,
             write_delta_bytes: 0,
             top_process: None,
+            details: matches!(group_type, GroupBy::Process)
+                .then(|| process.details.clone())
+                .unwrap_or_default(),
             timestamp,
         }
     }
@@ -450,6 +461,7 @@ struct RecordingAcc {
     users: BTreeSet<String>,
     max_process_count: usize,
     top_process: Option<(String, f64)>,
+    details: ProcessDetails,
     cpu_max_percent: f32,
     cpu_core_seconds: f64,
     cpu_samples: Vec<f32>,
@@ -485,6 +497,7 @@ impl RecordingAcc {
             users: sample.users.clone(),
             max_process_count: 0,
             top_process: None,
+            details: sample.details.clone(),
             cpu_max_percent: 0.0,
             cpu_core_seconds: 0.0,
             cpu_samples: Vec::new(),
@@ -567,6 +580,9 @@ impl RecordingAcc {
         {
             self.top_process = Some((name.clone(), *contribution));
         }
+        if !sample.details.is_empty() {
+            self.details = sample.details.clone();
+        }
     }
 
     fn into_row(
@@ -627,6 +643,7 @@ impl RecordingAcc {
             cpu_timeline: self.cpu_timeline,
             read_timeline: self.read_timeline,
             write_timeline: self.write_timeline,
+            details: self.details,
         }
     }
 }
@@ -740,7 +757,7 @@ fn lifecycle_status(
 mod tests {
     use std::time::{Duration, SystemTime};
 
-    use crate::metrics::{ProcessIdentity, RawProcessSample, SystemSample};
+    use crate::metrics::{ProcessDetails, ProcessIdentity, RawProcessSample, SystemSample};
 
     use super::*;
 
@@ -774,6 +791,7 @@ mod tests {
             disk_total_write_bytes: write,
             disk_read_delta_bytes: read,
             disk_write_delta_bytes: write,
+            details: ProcessDetails::default(),
         }
     }
 

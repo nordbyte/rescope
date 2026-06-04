@@ -921,6 +921,7 @@ mod tests {
             write_bps: 0.0,
             io_bps: 0.0,
             top_process: None,
+            details: rescope_core::ProcessDetails::default(),
             timestamp: SystemTime::UNIX_EPOCH,
         }
     }

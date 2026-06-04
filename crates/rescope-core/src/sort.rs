@@ -36,13 +36,15 @@ pub fn sort_recording_rows_limit(rows: &mut Vec<AggregateRow>, sort_by: SortBy, 
 
 fn snapshot_cmp(left: &SnapshotRow, right: &SnapshotRow, sort_by: SortBy) -> Ordering {
     match sort_by {
-        SortBy::Cpu => desc_f32(left.cpu_percent, right.cpu_percent),
-        SortBy::Ram => right.ram_bytes.cmp(&left.ram_bytes),
+        SortBy::Cpu | SortBy::CpuMax | SortBy::CpuP95 => {
+            desc_f32(left.cpu_percent, right.cpu_percent)
+        }
+        SortBy::Ram | SortBy::RamAvg | SortBy::RamEnd => right.ram_bytes.cmp(&left.ram_bytes),
         SortBy::Read => right.disk_read_delta_bytes.cmp(&left.disk_read_delta_bytes),
         SortBy::Write => right
             .disk_write_delta_bytes
             .cmp(&left.disk_write_delta_bytes),
-        SortBy::Io => right.disk_io_delta_bytes.cmp(&left.disk_io_delta_bytes),
+        SortBy::Io | SortBy::IoAvg => right.disk_io_delta_bytes.cmp(&left.disk_io_delta_bytes),
         SortBy::Pid => left
             .pid
             .unwrap_or(u32::MAX)
@@ -55,6 +57,7 @@ fn snapshot_cmp(left: &SnapshotRow, right: &SnapshotRow, sort_by: SortBy) -> Ord
             .user_label()
             .to_ascii_lowercase()
             .cmp(&right.user_label().to_ascii_lowercase()),
+        SortBy::Started | SortBy::Exited => right.process_count.cmp(&left.process_count),
     }
     .then_with(|| left.display_name.cmp(&right.display_name))
 }
@@ -62,12 +65,20 @@ fn snapshot_cmp(left: &SnapshotRow, right: &SnapshotRow, sort_by: SortBy) -> Ord
 fn recording_cmp(left: &AggregateRow, right: &AggregateRow, sort_by: SortBy) -> Ordering {
     match sort_by {
         SortBy::Cpu => desc_f32(left.cpu_avg_percent, right.cpu_avg_percent),
+        SortBy::CpuMax => desc_f32(left.cpu_max_percent, right.cpu_max_percent),
+        SortBy::CpuP95 => desc_f32(left.cpu_p95_percent, right.cpu_p95_percent),
         SortBy::Ram => right.ram_max_bytes.cmp(&left.ram_max_bytes),
+        SortBy::RamAvg => right.ram_avg_bytes.cmp(&left.ram_avg_bytes),
+        SortBy::RamEnd => right.ram_end_bytes.cmp(&left.ram_end_bytes),
         SortBy::Read => right.disk_read_total_bytes.cmp(&left.disk_read_total_bytes),
         SortBy::Write => right
             .disk_write_total_bytes
             .cmp(&left.disk_write_total_bytes),
         SortBy::Io => right.disk_io_total_bytes.cmp(&left.disk_io_total_bytes),
+        SortBy::IoAvg => desc_f64(
+            left.io_bytes_per_second_avg,
+            right.io_bytes_per_second_avg,
+        ),
         SortBy::Pid => left
             .pid
             .unwrap_or(u32::MAX)
@@ -80,11 +91,17 @@ fn recording_cmp(left: &AggregateRow, right: &AggregateRow, sort_by: SortBy) -> 
             .user_label()
             .to_ascii_lowercase()
             .cmp(&right.user_label().to_ascii_lowercase()),
+        SortBy::Started => right.started_count.cmp(&left.started_count),
+        SortBy::Exited => right.exited_count.cmp(&left.exited_count),
     }
     .then_with(|| left.display_name.cmp(&right.display_name))
 }
 
 fn desc_f32(left: f32, right: f32) -> Ordering {
+    right.partial_cmp(&left).unwrap_or(Ordering::Equal)
+}
+
+fn desc_f64(left: f64, right: f64) -> Ordering {
     right.partial_cmp(&left).unwrap_or(Ordering::Equal)
 }
 
@@ -114,7 +131,7 @@ impl SortUserLabel for AggregateRow {
 mod tests {
     use std::time::SystemTime;
 
-    use crate::metrics::{GroupBy, GroupKey, SnapshotRow};
+    use crate::metrics::{GroupBy, GroupKey, ProcessDetails, SnapshotRow};
 
     use super::*;
 
@@ -138,6 +155,7 @@ mod tests {
             write_bps: 0.0,
             io_bps: 0.0,
             top_process: None,
+            details: ProcessDetails::default(),
             timestamp: SystemTime::UNIX_EPOCH,
         }
     }

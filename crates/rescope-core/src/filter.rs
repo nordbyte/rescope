@@ -269,7 +269,7 @@ fn matches_process_search(process_sample: &RawProcessSample, needles: &[String])
 mod tests {
     use std::time::SystemTime;
 
-    use crate::metrics::{ProcessIdentity, RawProcessSample};
+    use crate::metrics::{ProcessDetails, ProcessIdentity, RawProcessSample};
 
     use super::*;
 
@@ -294,6 +294,7 @@ mod tests {
             disk_total_write_bytes: 5,
             disk_read_delta_bytes: 6,
             disk_write_delta_bytes: 7,
+            details: ProcessDetails::default(),
         }
     }
 

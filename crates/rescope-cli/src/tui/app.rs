@@ -2100,6 +2100,7 @@ mod tests {
                     disk_total_write_bytes: 0,
                     disk_read_delta_bytes: 0,
                     disk_write_delta_bytes: 0,
+                    details: rescope_core::ProcessDetails::default(),
                 })
                 .collect(),
             sample_interval: Duration::from_secs(1),

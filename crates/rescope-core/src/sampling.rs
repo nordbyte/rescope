@@ -9,7 +9,7 @@ use sysinfo::{
 };
 
 use crate::error::RescopeError;
-use crate::metrics::{ProcessIdentity, RawProcessSample, SystemSample};
+use crate::metrics::{ProcessDetails, ProcessIdentity, RawProcessSample, SystemSample};
 
 const USER_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -173,6 +173,7 @@ impl SysinfoSampler {
                 disk_total_write_bytes: disk.total_written_bytes,
                 disk_read_delta_bytes,
                 disk_write_delta_bytes,
+                details: process_details(pid.as_u32(), process),
             });
         }
 
@@ -249,6 +250,57 @@ fn uid_to_string(uid: &Uid) -> String {
 
 fn counter_delta(current: u64, previous: u64) -> u64 {
     current.saturating_sub(previous)
+}
+
+fn process_details(pid: u32, process: &sysinfo::Process) -> ProcessDetails {
+    ProcessDetails {
+        status: Some(format!("{:?}", process.status())),
+        run_time_seconds: Some(process.run_time()),
+        accumulated_cpu_time_ms: Some(process.accumulated_cpu_time()),
+        thread_count: linux_thread_count(pid),
+        open_file_count: linux_open_file_count(pid),
+        cgroup_path: linux_cgroup_path(pid),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_thread_count(pid: u32) -> Option<usize> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    status.lines().find_map(|line| {
+        line.strip_prefix("Threads:")
+            .and_then(|value| value.trim().parse::<usize>().ok())
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_thread_count(_pid: u32) -> Option<usize> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn linux_open_file_count(pid: u32) -> Option<usize> {
+    std::fs::read_dir(format!("/proc/{pid}/fd"))
+        .ok()
+        .map(|entries| entries.filter(Result::is_ok).count())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_open_file_count(_pid: u32) -> Option<usize> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn linux_cgroup_path(pid: u32) -> Option<String> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    text.lines().find_map(|line| {
+        let path = line.rsplit(':').next()?.trim();
+        (!path.is_empty()).then(|| path.to_string())
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_cgroup_path(_pid: u32) -> Option<String> {
+    None
 }
 
 #[cfg(test)]

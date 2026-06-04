@@ -406,13 +406,20 @@ pub enum CliGroupBy {
 #[serde(rename_all = "kebab-case")]
 pub enum CliSortBy {
     Cpu,
+    CpuMax,
+    CpuP95,
     Ram,
+    RamAvg,
+    RamEnd,
     Read,
     Write,
     Io,
+    IoAvg,
     Pid,
     Name,
     User,
+    Started,
+    Exited,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
@@ -451,13 +458,20 @@ impl From<CliSortBy> for SortBy {
     fn from(value: CliSortBy) -> Self {
         match value {
             CliSortBy::Cpu => SortBy::Cpu,
+            CliSortBy::CpuMax => SortBy::CpuMax,
+            CliSortBy::CpuP95 => SortBy::CpuP95,
             CliSortBy::Ram => SortBy::Ram,
+            CliSortBy::RamAvg => SortBy::RamAvg,
+            CliSortBy::RamEnd => SortBy::RamEnd,
             CliSortBy::Read => SortBy::Read,
             CliSortBy::Write => SortBy::Write,
             CliSortBy::Io => SortBy::Io,
+            CliSortBy::IoAvg => SortBy::IoAvg,
             CliSortBy::Pid => SortBy::Pid,
             CliSortBy::Name => SortBy::Name,
             CliSortBy::User => SortBy::User,
+            CliSortBy::Started => SortBy::Started,
+            CliSortBy::Exited => SortBy::Exited,
         }
     }
 }
