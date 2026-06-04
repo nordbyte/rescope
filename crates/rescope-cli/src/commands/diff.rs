@@ -131,6 +131,19 @@ fn extract_rows(report: &Value) -> HashMap<String, RowMetrics> {
 }
 
 fn row_key(row: &Value) -> Option<String> {
+    if let Some(identity) = row.get("process_identity") {
+        let pid = identity.get("pid").and_then(Value::as_u64)?;
+        let start_time = identity
+            .get("start_time_epoch_s")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let name = identity
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Some(format!("process:{pid}:{start_time}:{name}"));
+    }
+
     let display_name = row.get("display_name")?.as_str()?.to_string();
     let group_type = row
         .get("group_type")
@@ -208,12 +221,13 @@ fn render_diff(report: &DiffReport, raw_bytes: bool) -> String {
 }
 
 fn write_diff_csv(path: &std::path::Path, report: &DiffReport) -> Result<()> {
-    let mut writer: Box<dyn std::io::Write> = if path == std::path::Path::new("-") {
-        Box::new(std::io::stdout().lock())
-    } else {
-        Box::new(std::fs::File::create(path)?)
-    };
-    let mut csv = ::csv::Writer::from_writer(&mut writer);
+    output_csv::write_custom(path, |csv| write_diff_csv_rows(csv, report))
+}
+
+fn write_diff_csv_rows<W: std::io::Write>(
+    csv: &mut ::csv::Writer<W>,
+    report: &DiffReport,
+) -> Result<()> {
     csv.write_record([
         "status",
         "key",
@@ -254,7 +268,6 @@ fn write_diff_csv(path: &std::path::Path, report: &DiffReport) -> Result<()> {
             row.delta_io_bytes.to_string(),
         ])?;
     }
-    csv.flush()?;
     Ok(())
 }
 

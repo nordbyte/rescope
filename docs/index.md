@@ -2,7 +2,7 @@
 
 Inspect and record resource usage by process and user.
 
-`rescope` is a portable Rust CLI for answering one practical question: which processes, commands or users are consuming CPU, RAM and I/O right now, and what changed during a measured window?
+`rescope` is a portable Rust CLI for answering one practical question: which processes, commands, users, cgroups or containers are consuming CPU, RAM and I/O right now, and what changed during a measured window?
 
 ## What it does
 
@@ -23,9 +23,11 @@ rescope snapshot --limit 10
 rescope snapshot --group user --sort ram
 rescope live --tui --group command
 rescope record --duration 1m --interval 1s --group user
+rescope record --duration 30s --raw-samples raw.json
+rescope replay raw.json --group container
 rescope record --duration 30s --name node --json report.json
 rescope tree --process postgres --show-path
-rescope watch --name postgres --min-cpu 80 --duration 5m
+rescope watch --name postgres --min-cpu 80 --for 30s --duration 5m
 rescope diff before.json after.json
 ```
 

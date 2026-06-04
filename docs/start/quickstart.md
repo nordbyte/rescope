@@ -76,6 +76,7 @@ Stream continuous live data:
 ```bash
 rescope live --quiet --jsonl live.jsonl
 rescope live --quiet --csv-stream live.csv
+rescope live --prometheus 127.0.0.1:9898
 ```
 
 Inspect process ancestry and subtree totals:
@@ -87,6 +88,13 @@ rescope tree --process node --show-path
 Watch for a threshold and compare reports:
 
 ```bash
-rescope watch --name postgres --min-cpu 80 --duration 5m
+rescope watch --name postgres --min-cpu 80 --for 30s --duration 5m
 rescope diff before.json after.json
+```
+
+Store raw samples for later replay:
+
+```bash
+rescope record --duration 30s --raw-samples raw.json
+rescope replay raw.json --group container --sort cpu-max
 ```

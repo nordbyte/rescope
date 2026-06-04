@@ -12,6 +12,7 @@ jobs:
   test:
     name: Rust
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,14 +36,17 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
+      - name: Check
+        run: cargo check --workspace --locked
+
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Build CLI binary
-        run: cargo build -p rescope-cli
+        run: cargo build -p rescope-cli --locked
 
       - name: Install docs dependencies
         run: npm ci --prefix docs --no-audit --no-fund
@@ -61,6 +65,13 @@ jobs:
 
       - name: Record smoke
         run: target/debug/rescope record --duration 3s --interval 1s --limit 5
+
+      - name: Completion and manpage smoke
+        run: |
+          target/debug/rescope completions bash >/tmp/rescope.bash
+          target/debug/rescope man >/tmp/rescope.1
+          test -s /tmp/rescope.bash
+          test -s /tmp/rescope.1
 
       - name: npm wrapper smoke
         run: npm run npm:smoke
@@ -81,6 +92,7 @@ jobs:
   cross-platform:
     name: Smoke ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -97,7 +109,7 @@ jobs:
           rustup default stable
 
       - name: Build
-        run: cargo build --workspace
+        run: cargo build --workspace --locked
 
       - name: Snapshot smoke
-        run: cargo run -p rescope-cli -- snapshot --limit 5
+        run: cargo run -p rescope-cli --locked -- snapshot --limit 5

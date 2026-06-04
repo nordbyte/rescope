@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::{Duration, SystemTime};
 
+use crate::grouping::{display_name_for_group, group_key};
 use crate::metrics::{
     AggregateRow, GroupBy, GroupKey, ProcessDetails, ProcessIdentity, RawProcessSample,
     SnapshotRow, SortBy, SystemSample,
@@ -39,6 +40,8 @@ pub struct RecordingAccumulator {
     started_at: Option<SystemTime>,
     ended_at: Option<SystemTime>,
     logical_cpu_count: usize,
+    network_received_delta_bytes: u64,
+    network_transmitted_delta_bytes: u64,
 }
 
 impl RecordingAccumulator {
@@ -50,6 +53,8 @@ impl RecordingAccumulator {
             started_at: None,
             ended_at: None,
             logical_cpu_count: 1,
+            network_received_delta_bytes: 0,
+            network_transmitted_delta_bytes: 0,
         }
     }
 
@@ -64,6 +69,8 @@ impl RecordingAccumulator {
         self.started_at.get_or_insert(sample.timestamp);
         self.ended_at = Some(sample.timestamp);
         self.logical_cpu_count = self.logical_cpu_count.max(sample.logical_cpu_count);
+        self.network_received_delta_bytes += sample.network_received_delta_bytes;
+        self.network_transmitted_delta_bytes += sample.network_transmitted_delta_bytes;
 
         let grouped = group_sample_for_recording(
             sample,
@@ -98,6 +105,14 @@ impl RecordingAccumulator {
 
     pub fn logical_cpu_count(&self) -> usize {
         self.logical_cpu_count.max(1)
+    }
+
+    pub fn network_received_delta_bytes(&self) -> u64 {
+        self.network_received_delta_bytes
+    }
+
+    pub fn network_transmitted_delta_bytes(&self) -> u64 {
+        self.network_transmitted_delta_bytes
     }
 
     pub fn into_rows(self, measured_duration: Duration, limit: usize) -> Vec<AggregateRow> {
@@ -185,60 +200,6 @@ fn group_sample_for_recording(
     grouped
 }
 
-fn group_key(process: &RawProcessSample, group_by: GroupBy) -> GroupKey {
-    match group_by {
-        GroupBy::Process => GroupKey::Process(process.identity.clone()),
-        GroupBy::Name => GroupKey::Name(process.identity.name.clone()),
-        GroupBy::User => GroupKey::User(process.user_display()),
-        GroupBy::Command => GroupKey::Command(
-            process
-                .command
-                .clone()
-                .filter(|command| !command.trim().is_empty())
-                .unwrap_or_else(|| process.identity.name.clone()),
-        ),
-        GroupBy::Executable => GroupKey::Executable(
-            process
-                .executable
-                .clone()
-                .filter(|path| !path.trim().is_empty())
-                .unwrap_or_else(|| "unknown".to_string()),
-        ),
-        GroupBy::Parent => GroupKey::Parent(parent_display(process)),
-    }
-}
-
-fn display_name_for_group(
-    group_type: GroupBy,
-    process: &RawProcessSample,
-    show_command: bool,
-) -> String {
-    match group_type {
-        GroupBy::Process => process.display_process(show_command, false),
-        GroupBy::Name => process.identity.name.clone(),
-        GroupBy::User => process.user_display(),
-        GroupBy::Command => process
-            .command
-            .clone()
-            .filter(|command| !command.trim().is_empty())
-            .unwrap_or_else(|| process.identity.name.clone()),
-        GroupBy::Executable => process
-            .executable
-            .clone()
-            .filter(|path| !path.trim().is_empty())
-            .unwrap_or_else(|| "unknown".to_string()),
-        GroupBy::Parent => parent_display(process),
-    }
-}
-
-fn parent_display(process: &RawProcessSample) -> String {
-    match (process.parent_pid, process.parent_name.as_deref()) {
-        (Some(pid), Some(name)) if !name.trim().is_empty() => format!("{pid} ({name})"),
-        (Some(pid), _) => pid.to_string(),
-        (None, _) => "unknown".to_string(),
-    }
-}
-
 fn duration_seconds(duration: Duration) -> f64 {
     duration.as_secs_f64().max(0.001)
 }
@@ -276,6 +237,7 @@ struct SnapshotAcc {
     key: GroupKey,
     group_type: GroupBy,
     display_name: String,
+    process_identity: Option<ProcessIdentity>,
     pid: Option<u32>,
     user_name: Option<String>,
     executable_path: Option<String>,
@@ -304,6 +266,8 @@ impl SnapshotAcc {
             key,
             group_type,
             display_name,
+            process_identity: matches!(group_type, GroupBy::Process)
+                .then(|| process.identity.clone()),
             pid: (group_type == GroupBy::Process).then_some(process.identity.pid),
             user_name: matches!(group_type, GroupBy::Process).then(|| process.user_display()),
             executable_path: matches!(group_type, GroupBy::Process)
@@ -356,6 +320,7 @@ impl SnapshotAcc {
             key: self.key,
             group_type: self.group_type,
             display_name: self.display_name,
+            process_identity: self.process_identity,
             pid: self.pid,
             user_name: self.user_name,
             executable_path: self.executable_path,
@@ -380,6 +345,7 @@ impl SnapshotAcc {
 #[derive(Debug)]
 struct GroupSample {
     display_name: String,
+    process_identity: Option<ProcessIdentity>,
     pid: Option<u32>,
     user_name: Option<String>,
     executable_path: Option<String>,
@@ -405,6 +371,8 @@ impl GroupSample {
         let display_name = display_name_for_group(group_type, process, show_command);
         Self {
             display_name,
+            process_identity: matches!(group_type, GroupBy::Process)
+                .then(|| process.identity.clone()),
             pid: (group_type == GroupBy::Process).then_some(process.identity.pid),
             user_name: matches!(group_type, GroupBy::Process).then(|| process.user_display()),
             executable_path: matches!(group_type, GroupBy::Process)
@@ -457,6 +425,7 @@ struct RecordingAcc {
     key: GroupKey,
     group_type: GroupBy,
     display_name: String,
+    process_identity: Option<ProcessIdentity>,
     pid: Option<u32>,
     user_name: Option<String>,
     executable_path: Option<String>,
@@ -493,6 +462,7 @@ impl RecordingAcc {
             key,
             group_type,
             display_name: sample.display_name.clone(),
+            process_identity: sample.process_identity.clone(),
             pid: sample.pid,
             user_name: sample.user_name.clone(),
             executable_path: sample.executable_path.clone(),
@@ -606,6 +576,7 @@ impl RecordingAcc {
             key: self.key,
             group_type: self.group_type,
             display_name: self.display_name,
+            process_identity: self.process_identity,
             pid: self.pid,
             user_name: self.user_name,
             executable_path: self.executable_path,
@@ -806,6 +777,9 @@ mod tests {
             processes,
             sample_interval: Duration::from_secs(1),
             logical_cpu_count: 4,
+            networks: Vec::new(),
+            network_received_delta_bytes: 0,
+            network_transmitted_delta_bytes: 0,
         }
     }
 
@@ -818,6 +792,9 @@ mod tests {
             processes,
             sample_interval: Duration::from_secs(1),
             logical_cpu_count: 4,
+            networks: Vec::new(),
+            network_received_delta_bytes: 0,
+            network_transmitted_delta_bytes: 0,
         }
     }
 

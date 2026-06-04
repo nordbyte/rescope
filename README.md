@@ -8,7 +8,7 @@ Use the README for the first install and quick start. Full documentation is avai
 
 ## What rescope shows
 
-- CPU usage per process and aggregated by user, name, command, executable or parent PID/name.
+- CPU usage per process and aggregated by user, name, command, executable, parent PID/name, cgroup, systemd unit or container.
 - Flexible process filtering across PID, process name, executable path and command line.
 - Resident memory per process and aggregate RAM start/end/min/max/p95/average/delta during recordings.
 - Per-process read and write counters with safe deltas.
@@ -18,7 +18,7 @@ Use the README for the first install and quick start. Full documentation is avai
 - Parent-child process trees with subtree CPU, RAM and I/O totals.
 - Alert-style watch mode and JSON report diffs for before/after comparisons.
 - TUI menus for sorting, grouping, filters, column visibility, sampling, recording, exports and frozen/following details.
-- JSON, JSONL and CSV exports to files or stdout.
+- JSON, JSONL, CSV, raw replay and Prometheus exports.
 
 ## Install
 
@@ -58,6 +58,7 @@ npm install -g rescope
 rescope snapshot --limit 10
 rescope snapshot --group user --sort ram --limit 10
 rescope snapshot --group executable --sort io --all
+rescope snapshot --group container --sort cpu
 rescope snapshot --process postgres --show-path
 rescope snapshot --path /usr/bin --show-path
 rescope snapshot --name-regex '^(node|bun)$' --min-ram 512MiB
@@ -66,12 +67,17 @@ rescope live --tui --group command --sort cpu
 rescope live --tui --profile io
 rescope live --once --json -
 rescope live --quiet --jsonl live.jsonl
+rescope live --prometheus 127.0.0.1:9898
 rescope record --duration 1m --interval 1s --group user
 rescope record --duration 30s --profile memory --include-idle
 rescope record --duration 30s --name node --json report.json --csv report.csv
+rescope record --duration 30s --raw-samples raw.json
+rescope replay raw.json --group systemd --sort cpu-max
 rescope tree --process postgres --show-path
-rescope watch --name postgres --min-cpu 80 --duration 5m
+rescope watch --name postgres --min-cpu 80 --for 30s --duration 5m
 rescope diff before.json after.json
+rescope completions bash > rescope.bash
+rescope man > rescope.1
 ```
 
 Running `rescope` without a subcommand is equivalent to `rescope live`.
@@ -88,7 +94,7 @@ Profiles are available with `--profile cpu|memory|io|commands|users|tree`. A JSO
 }
 ```
 
-Command-specific config sections are available as `snapshot`, `live`, `record`, `tree` and `watch`.
+Command-specific config sections are available as `snapshot`, `live`, `record`, `tree` and `watch`. Named overlays can be stored under `profiles` and selected with `--config-profile <NAME>`.
 
 Use it with:
 
@@ -112,7 +118,7 @@ RAM is resident memory when the platform exposes it that way. Disk I/O is platfo
 
 Recording reports are aggregated as samples arrive and hide rows with no CPU, I/O or RAM movement by default. Use `--include-idle` to keep the current limit and include them, or `--all` to include every row.
 
-Process details such as status, runtime, accumulated CPU time, thread count, open file count and Linux cgroup path are included when the platform exposes them.
+Process details such as status, runtime, accumulated CPU time, thread count, open file count and Linux cgroup path are included when the platform exposes them. These Linux `/proc` details are cached briefly per process identity to avoid rereading them on every fast live sample.
 
 ## Documentation
 

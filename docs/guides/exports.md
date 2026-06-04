@@ -15,13 +15,16 @@ In `rescope live --tui`, press `e` for snapshot exports or `r` for recording exp
 
 Recording exports include approximate percentile fields and started/exited process counts. JSON includes bounded timelines; CSV keeps one row per aggregate result.
 
-Continuous live streams use newline-delimited JSON or streaming CSV:
+Continuous live streams use newline-delimited JSON, streaming CSV or Prometheus metrics:
 
 ```bash
 rescope live --quiet --jsonl live.jsonl
 rescope live --quiet --csv-stream live.csv
 rescope live --once --quiet --jsonl -
+rescope live --prometheus 127.0.0.1:9898
 ```
+
+`record --raw-samples raw.json` stores replayable raw samples. Use `rescope replay raw.json` to rebuild recording reports with different filters, grouping, sorting or export formats.
 
 ## Atomic file writes
 
@@ -35,4 +38,4 @@ Use `-` to write one export to stdout:
 rescope snapshot --json - | jq '.rows | length'
 ```
 
-Only one stdout export can be used at a time. For continuous live streams, use `--quiet` when `--jsonl -` or `--csv-stream -` writes to stdout.
+Only one stdout export can be used at a time. For continuous live streams, use `--quiet` when `--jsonl -`, `--csv-stream -` or `--prometheus -` writes to stdout.

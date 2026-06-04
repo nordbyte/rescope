@@ -11,11 +11,11 @@ use crossterm::terminal::{
     enable_raw_mode, size as terminal_size,
 };
 use rescope_core::{
-    FilterSpec, GroupBy, RawProcessSample, RecordingAccumulator, RecordingAccumulatorOptions,
-    RecordingReport, RecordingReportOptions, SampleSource, SamplerConfig, SnapshotReport,
-    SnapshotReportOptions, SnapshotRow, SortBy, SysinfoSampler, SystemSample,
-    build_recording_report_from_accumulator, build_snapshot_report, filter_sample, format_bps,
-    format_bytes, system_time_ms,
+    CompiledFilter, FilterSpec, GroupBy, RawProcessSample, RecordingAccumulator,
+    RecordingAccumulatorOptions, RecordingReport, RecordingReportOptions, SampleSource,
+    SamplerConfig, SnapshotReport, SnapshotReportOptions, SnapshotRow, SortBy, SysinfoSampler,
+    SystemSample, build_recording_report_from_accumulator, build_snapshot_report,
+    filter_sample_with, format_bps, format_bytes, system_time_ms,
 };
 
 use crate::args::{Cli, LiveArgs};
@@ -23,15 +23,18 @@ use crate::output::{
     csv, json,
     table::{self, SnapshotColumns, SnapshotRenderOptions},
 };
-use crate::tui::view;
+use crate::tui::{labels::group_label, view};
 
-const GROUP_OPTIONS: [GroupBy; 6] = [
+const GROUP_OPTIONS: [GroupBy; 9] = [
     GroupBy::Process,
     GroupBy::Name,
     GroupBy::User,
     GroupBy::Command,
     GroupBy::Executable,
     GroupBy::Parent,
+    GroupBy::Cgroup,
+    GroupBy::Systemd,
+    GroupBy::Container,
 ];
 
 const OPTIONS_ITEMS: [&str; 9] = [
@@ -1601,7 +1604,8 @@ fn format_footer(app: &TuiApp, color: bool) -> String {
 }
 
 fn apply_tui_filters(sample: &SystemSample, app: &TuiApp) -> SystemSample {
-    let mut filtered = filter_sample(sample, &app.filter);
+    let matcher = CompiledFilter::new(&app.filter);
+    let mut filtered = filter_sample_with(sample, &matcher);
     let query = app.search_query.trim().to_ascii_lowercase();
     if query.is_empty() {
         return filtered;
@@ -1945,17 +1949,6 @@ fn export_extension(format: ExportFormat) -> &'static str {
     }
 }
 
-fn group_label(group_by: GroupBy) -> &'static str {
-    match group_by {
-        GroupBy::Process => "process",
-        GroupBy::Name => "name",
-        GroupBy::User => "user",
-        GroupBy::Command => "command",
-        GroupBy::Executable => "executable",
-        GroupBy::Parent => "parent",
-    }
-}
-
 fn write_tui_text(output: &str) -> io::Result<()> {
     let output = output.replace('\n', "\r\n");
     io::stdout().write_all(output.as_bytes())
@@ -2291,6 +2284,9 @@ mod tests {
                 .collect(),
             sample_interval: Duration::from_secs(1),
             logical_cpu_count: 1,
+            networks: Vec::new(),
+            network_received_delta_bytes: 0,
+            network_transmitted_delta_bytes: 0,
         };
 
         build_snapshot_report(

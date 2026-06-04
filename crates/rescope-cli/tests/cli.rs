@@ -141,6 +141,22 @@ fn snapshot_supports_new_groups_all_and_normalized_cpu() {
 }
 
 #[test]
+fn snapshot_supports_cgroup_systemd_and_container_groups() {
+    for (group, header) in [
+        ("cgroup", "CGROUP"),
+        ("systemd", "SYSTEMD"),
+        ("container", "CONTAINER"),
+    ] {
+        Command::cargo_bin("rescope")
+            .unwrap()
+            .args(["snapshot", "--group", group, "--limit", "5"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(header));
+    }
+}
+
+#[test]
 fn snapshot_profile_tree_uses_parent_grouping() {
     Command::cargo_bin("rescope")
         .unwrap()
@@ -230,6 +246,30 @@ fn config_file_applies_profile_defaults() {
 }
 
 #[test]
+fn config_file_applies_named_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("rescope.json");
+    std::fs::write(
+        &config,
+        r#"{"profiles":{"containers":{"group":"container","limit":5}}}"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "--config-profile",
+            "containers",
+            "snapshot",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CONTAINER"));
+}
+
+#[test]
 fn snapshot_accepts_regex_threshold_and_invert_filters() {
     Command::cargo_bin("rescope")
         .unwrap()
@@ -313,6 +353,24 @@ fn live_once_can_stream_csv_to_stdout() {
 }
 
 #[test]
+fn live_once_can_export_prometheus_to_stdout() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "live",
+            "--once",
+            "--quiet",
+            "--prometheus",
+            "-",
+            "--limit",
+            "2",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("rescope_system_cpu_percent"));
+}
+
+#[test]
 fn live_export_without_once_is_rejected() {
     Command::cargo_bin("rescope")
         .unwrap()
@@ -361,6 +419,51 @@ fn tree_command_runs_and_exports_json() {
         .success()
         .stdout(predicate::str::contains("\"mode\": \"tree\""))
         .stdout(predicate::str::contains("\"nodes\""));
+}
+
+#[test]
+fn record_raw_samples_can_be_replayed() {
+    let dir = tempfile::tempdir().unwrap();
+    let raw = dir.path().join("raw.json");
+
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args([
+            "record",
+            "--duration",
+            "1s",
+            "--interval",
+            "1s",
+            "--raw-samples",
+            raw.to_str().unwrap(),
+            "--quiet",
+        ])
+        .assert()
+        .success();
+
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args(["replay", raw.to_str().unwrap(), "--json", "-"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"mode\": \"record\""));
+}
+
+#[test]
+fn completions_and_man_can_write_stdout() {
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .args(["completions", "bash"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("rescope"));
+
+    Command::cargo_bin("rescope")
+        .unwrap()
+        .arg("man")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("rescope"));
 }
 
 #[test]

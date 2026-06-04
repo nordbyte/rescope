@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -59,6 +60,13 @@ pub struct Cli {
     pub config: Option<PathBuf>,
 
     #[arg(
+        long = "config-profile",
+        global = true,
+        help = "Apply a named profile from the JSON config file"
+    )]
+    pub config_profile: Option<String>,
+
+    #[arg(
         short,
         long,
         global = true,
@@ -89,12 +97,30 @@ impl Cli {
 
     pub fn apply_config(mut self) -> AnyhowResult<Self> {
         let Some(path) = self.config.clone() else {
+            if self.config_profile.is_some() {
+                anyhow::bail!("--config-profile requires --config");
+            }
             return Ok(self);
         };
         let text = std::fs::read_to_string(&path)
             .with_context(|| format!("reading config {}", path.display()))?;
         let config: CliConfig = serde_json::from_str(&text)
             .with_context(|| format!("parsing config {}", path.display()))?;
+        let snapshot_overlay = config.snapshot.clone();
+        let live_overlay = config.live.clone();
+        let record_overlay = config.record.clone();
+        let tree_overlay = config.tree.clone();
+        let watch_overlay = config.watch.clone();
+        let config = if let Some(profile_name) = &self.config_profile {
+            let overlay = config
+                .profiles
+                .get(profile_name)
+                .with_context(|| format!("config profile \"{profile_name}\" not found"))?
+                .clone();
+            config.with_overlay(Some(&overlay))
+        } else {
+            config
+        };
 
         if !self.bytes
             && let Some(bytes) = config.bytes
@@ -119,21 +145,23 @@ impl Cli {
 
         match &mut self.command {
             Some(Command::Snapshot(args)) => {
-                apply_snapshot_config(args, &config.with_overlay(config.snapshot.as_ref()))?
+                apply_snapshot_config(args, &config.with_overlay(snapshot_overlay.as_ref()))?
             }
             Some(Command::Live(args)) => {
-                apply_live_config(args, &config.with_overlay(config.live.as_ref()))?
+                apply_live_config(args, &config.with_overlay(live_overlay.as_ref()))?
             }
             Some(Command::Record(args)) => {
-                apply_record_config(args, &config.with_overlay(config.record.as_ref()))?
+                apply_record_config(args, &config.with_overlay(record_overlay.as_ref()))?
             }
+            Some(Command::Replay(_)) => {}
             Some(Command::Tree(args)) => {
-                apply_tree_config(args, &config.with_overlay(config.tree.as_ref()))?
+                apply_tree_config(args, &config.with_overlay(tree_overlay.as_ref()))?
             }
             Some(Command::Watch(args)) => {
-                apply_watch_config(args, &config.with_overlay(config.watch.as_ref()))?
+                apply_watch_config(args, &config.with_overlay(watch_overlay.as_ref()))?
             }
             Some(Command::Diff(_)) => {}
+            Some(Command::Completions(_) | Command::Man(_)) => {}
             None => {}
         }
 
@@ -183,6 +211,7 @@ pub struct CliConfig {
     pub plain: Option<bool>,
     pub jsonl: Option<PathBuf>,
     pub csv_stream: Option<PathBuf>,
+    pub prometheus: Option<String>,
     pub stream: Option<bool>,
     pub exit_code: Option<u8>,
     pub snapshot: Option<ConfigOverlay>,
@@ -190,6 +219,7 @@ pub struct CliConfig {
     pub record: Option<ConfigOverlay>,
     pub tree: Option<ConfigOverlay>,
     pub watch: Option<ConfigOverlay>,
+    pub profiles: HashMap<String, ConfigOverlay>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -230,6 +260,7 @@ pub struct ConfigOverlay {
     pub plain: Option<bool>,
     pub jsonl: Option<PathBuf>,
     pub csv_stream: Option<PathBuf>,
+    pub prometheus: Option<String>,
     pub stream: Option<bool>,
     pub exit_code: Option<u8>,
 }
@@ -276,6 +307,7 @@ impl CliConfig {
             merged.plain = overlay.plain.or(merged.plain);
             merged.jsonl = overlay.jsonl.clone().or(merged.jsonl);
             merged.csv_stream = overlay.csv_stream.clone().or(merged.csv_stream);
+            merged.prometheus = overlay.prometheus.clone().or(merged.prometheus);
             merged.stream = overlay.stream.or(merged.stream);
             merged.exit_code = overlay.exit_code.or(merged.exit_code);
         }
@@ -293,9 +325,12 @@ pub enum Command {
     Snapshot(SnapshotArgs),
     Live(LiveArgs),
     Record(RecordArgs),
+    Replay(ReplayArgs),
     Tree(TreeArgs),
     Watch(WatchArgs),
     Diff(DiffArgs),
+    Completions(CompletionsArgs),
+    Man(ManArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -405,6 +440,13 @@ pub struct LiveArgs {
         help = "Stream CSV snapshot rows to a file or '-' for stdout"
     )]
     pub csv_stream: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_name = "TARGET",
+        help = "Publish Prometheus metrics to '-', a file, or an HTTP bind address such as 127.0.0.1:9898"
+    )]
+    pub prometheus: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -424,6 +466,54 @@ pub struct RecordArgs {
 
     #[arg(long, default_value = "1s", value_parser = parse_duration_arg, help = "Sampling interval")]
     pub interval: Duration,
+
+    #[arg(
+        long,
+        value_enum,
+        default_value = "process",
+        help = "Group rows before sorting"
+    )]
+    pub group: CliGroupBy,
+
+    #[arg(long, value_enum, default_value = "io", help = "Sort aggregate rows")]
+    pub sort: CliSortBy,
+
+    #[arg(long, default_value_t = 20, value_parser = parse_limit, help = "Maximum rows to print")]
+    pub limit: usize,
+
+    #[arg(long, help = "Show all matching rows instead of applying --limit")]
+    pub all: bool,
+
+    #[arg(long, default_value_t = 5, help = "Number of RAM timelines to print")]
+    pub timeline: usize,
+
+    #[arg(long, help = "Normalize CPU percentages to one logical CPU")]
+    pub normalize_cpu: bool,
+
+    #[arg(long, help = "Keep rows without CPU, I/O, or RAM delta activity")]
+    pub include_idle: bool,
+
+    #[arg(
+        long = "raw-samples",
+        help = "Write replayable raw samples to this JSON file"
+    )]
+    pub raw_samples: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ReplayArgs {
+    #[command(flatten)]
+    pub filters: FilterArgs,
+
+    #[arg(help = "Raw sample JSON written by record --raw-samples")]
+    pub input: PathBuf,
+
+    #[arg(
+        long,
+        value_enum,
+        help = "Apply a convenience preset for common investigations"
+    )]
+    pub profile: Option<CliProfile>,
 
     #[arg(
         long,
@@ -481,6 +571,14 @@ pub struct WatchArgs {
     #[arg(long, default_value = "30s", value_parser = parse_duration_arg, help = "Maximum watch duration")]
     pub duration: Duration,
 
+    #[arg(
+        long = "for",
+        default_value = "0s",
+        value_parser = parse_duration_arg,
+        help = "Require the alert to match continuously for this duration"
+    )]
+    pub for_duration: Duration,
+
     #[arg(long, default_value = "1s", value_parser = parse_duration_arg, help = "Sampling interval")]
     pub interval: Duration,
 
@@ -519,6 +617,25 @@ pub struct DiffArgs {
 
     #[arg(long, help = "Show all changed rows")]
     pub all: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct CompletionsArgs {
+    #[arg(value_enum, help = "Shell to generate completions for")]
+    pub shell: clap_complete::Shell,
+
+    #[arg(short, long, help = "Write completions to this file instead of stdout")]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ManArgs {
+    #[arg(
+        short,
+        long,
+        help = "Write the man page to this file instead of stdout"
+    )]
+    pub output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Args, Default)]
@@ -628,6 +745,9 @@ pub enum CliGroupBy {
     Command,
     Executable,
     Parent,
+    Cgroup,
+    Systemd,
+    Container,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Deserialize)]
@@ -678,6 +798,9 @@ impl From<CliGroupBy> for GroupBy {
             CliGroupBy::Command => GroupBy::Command,
             CliGroupBy::Executable => GroupBy::Executable,
             CliGroupBy::Parent => GroupBy::Parent,
+            CliGroupBy::Cgroup => GroupBy::Cgroup,
+            CliGroupBy::Systemd => GroupBy::Systemd,
+            CliGroupBy::Container => GroupBy::Container,
         }
     }
 }
@@ -767,6 +890,9 @@ fn apply_live_config(args: &mut LiveArgs, config: &CliConfig) -> AnyhowResult<()
     }
     if args.csv_stream.is_none() {
         args.csv_stream = config.csv_stream.clone();
+    }
+    if args.prometheus.is_none() {
+        args.prometheus = config.prometheus.clone();
     }
     Ok(())
 }
@@ -1172,6 +1298,10 @@ impl SnapshotArgs {
         self.filters.needs_command()
             || self.effective_show_command()
             || matches!(self.effective_group(), GroupBy::Command)
+            || matches!(
+                self.effective_group(),
+                GroupBy::Cgroup | GroupBy::Systemd | GroupBy::Container
+            )
     }
 
     pub fn needs_executable(&self) -> bool {
@@ -1212,6 +1342,10 @@ impl LiveArgs {
         self.filters.needs_command()
             || self.effective_show_command()
             || matches!(self.effective_group(), GroupBy::Command)
+            || matches!(
+                self.effective_group(),
+                GroupBy::Cgroup | GroupBy::Systemd | GroupBy::Container
+            )
     }
 
     pub fn needs_executable(&self) -> bool {
@@ -1256,12 +1390,48 @@ impl RecordArgs {
         self.filters.needs_command()
             || self.effective_show_command()
             || matches!(self.effective_group(), GroupBy::Command)
+            || matches!(
+                self.effective_group(),
+                GroupBy::Cgroup | GroupBy::Systemd | GroupBy::Container
+            )
     }
 
     pub fn needs_executable(&self) -> bool {
         self.filters.needs_executable()
             || self.effective_show_path()
             || matches!(self.effective_group(), GroupBy::Executable)
+    }
+
+    pub fn effective_group(&self) -> GroupBy {
+        self.profile
+            .map(CliProfile::group)
+            .unwrap_or(self.group)
+            .into()
+    }
+
+    pub fn effective_sort(&self) -> SortBy {
+        self.profile
+            .map(CliProfile::sort)
+            .unwrap_or(self.sort)
+            .into()
+    }
+
+    pub fn effective_show_command(&self) -> bool {
+        self.filters.show_command || self.profile.is_some_and(CliProfile::show_command)
+    }
+
+    pub fn effective_show_path(&self) -> bool {
+        self.filters.show_path
+    }
+}
+
+impl ReplayArgs {
+    pub fn effective_limit(&self) -> usize {
+        if self.all { usize::MAX } else { self.limit }
+    }
+
+    pub fn effective_include_idle(&self) -> bool {
+        self.all || self.include_idle
     }
 
     pub fn effective_group(&self) -> GroupBy {

@@ -15,6 +15,7 @@ JSON exports include:
 - notes
 - bounded timeline arrays for recording rows
 - recording percentile and lifecycle count fields
+- system network receive/transmit deltas
 - process details when available
 
 Times are serialized as Unix milliseconds.
@@ -28,6 +29,12 @@ CSV exports contain the visible aggregate rows without terminal sparklines. CPU 
 ## JSONL and streaming CSV
 
 `live --jsonl` writes one compact JSON object per sample. `live --csv-stream` writes a header once and appends snapshot rows as samples arrive.
+
+## Raw samples and Prometheus
+
+`record --raw-samples` writes replayable JSON samples. `replay` reads that file and emits standard recording terminal, JSON or CSV output.
+
+`live --prometheus` emits Prometheus text format to stdout, a file or `/metrics` on a small built-in HTTP server.
 
 ## Stdout
 

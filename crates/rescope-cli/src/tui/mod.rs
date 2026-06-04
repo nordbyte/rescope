@@ -1,4 +1,5 @@
 pub mod app;
+pub mod labels;
 pub mod view;
 
 use std::io::IsTerminal;

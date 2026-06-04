@@ -14,6 +14,7 @@ docs
 The core crate has no terminal UI code. It owns:
 
 - system sampling
+- system network deltas
 - process identity
 - filtering
 - grouping
@@ -31,6 +32,7 @@ The CLI crate owns:
 - command execution
 - plain and interactive terminal output
 - JSON, JSONL and CSV export
+- raw sample replay and Prometheus export
 - live loop and streaming recording loop control
 
 ## npm/rescope

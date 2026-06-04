@@ -4,14 +4,17 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use sysinfo::{
-    CpuRefreshKind, MINIMUM_CPU_UPDATE_INTERVAL, MemoryRefreshKind, ProcessRefreshKind,
+    CpuRefreshKind, MINIMUM_CPU_UPDATE_INTERVAL, MemoryRefreshKind, Networks, ProcessRefreshKind,
     ProcessesToUpdate, RefreshKind, System, Uid, UpdateKind, Users,
 };
 
 use crate::error::RescopeError;
-use crate::metrics::{ProcessDetails, ProcessIdentity, RawProcessSample, SystemSample};
+use crate::metrics::{
+    NetworkSample, ProcessDetails, ProcessIdentity, RawProcessSample, SystemSample,
+};
 
 const USER_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const PROCESS_DETAILS_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 
 pub trait SampleSource {
     fn sample(&mut self) -> Result<SystemSample, RescopeError>;
@@ -27,7 +30,9 @@ pub struct SamplerConfig {
 pub struct SysinfoSampler {
     system: System,
     users: Users,
+    networks: Networks,
     previous: HashMap<ProcessIdentity, PreviousCounters>,
+    details_cache: HashMap<ProcessIdentity, CachedProcessDetails>,
     config: SamplerConfig,
     last_sample_at: Option<Instant>,
     users_refreshed_at: Instant,
@@ -37,6 +42,12 @@ pub struct SysinfoSampler {
 struct PreviousCounters {
     total_read_bytes: u64,
     total_write_bytes: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CachedProcessDetails {
+    refreshed_at: Instant,
+    details: ProcessDetails,
 }
 
 impl SysinfoSampler {
@@ -53,7 +64,9 @@ impl SysinfoSampler {
         Ok(Self {
             system,
             users: Users::new_with_refreshed_list(),
+            networks: Networks::new_with_refreshed_list(),
             previous: HashMap::new(),
+            details_cache: HashMap::new(),
             config,
             last_sample_at: None,
             users_refreshed_at: Instant::now(),
@@ -90,6 +103,7 @@ impl SysinfoSampler {
             true,
             process_refresh_kind(self.config),
         );
+        self.networks.refresh(true);
         if self.users_refreshed_at.elapsed() >= USER_REFRESH_INTERVAL {
             self.users.refresh();
             self.users_refreshed_at = Instant::now();
@@ -153,6 +167,9 @@ impl SysinfoSampler {
                 .flatten()
                 .filter(|path| !path.is_empty());
 
+            let details =
+                cached_process_details(&mut self.details_cache, &identity, pid.as_u32(), process);
+
             processes.push(RawProcessSample {
                 timestamp,
                 identity,
@@ -173,11 +190,23 @@ impl SysinfoSampler {
                 disk_total_write_bytes: disk.total_written_bytes,
                 disk_read_delta_bytes,
                 disk_write_delta_bytes,
-                details: process_details(pid.as_u32(), process),
+                details,
             });
         }
 
         self.previous.retain(|identity, _| seen.contains(identity));
+        self.details_cache
+            .retain(|identity, _| seen.contains(identity));
+
+        let networks = self.network_samples();
+        let network_received_delta_bytes = networks
+            .iter()
+            .map(|sample| sample.received_delta_bytes)
+            .sum();
+        let network_transmitted_delta_bytes = networks
+            .iter()
+            .map(|sample| sample.transmitted_delta_bytes)
+            .sum();
 
         SystemSample {
             timestamp,
@@ -187,8 +216,51 @@ impl SysinfoSampler {
             processes,
             sample_interval,
             logical_cpu_count: self.system.cpus().len().max(1),
+            networks,
+            network_received_delta_bytes,
+            network_transmitted_delta_bytes,
         }
     }
+
+    fn network_samples(&self) -> Vec<NetworkSample> {
+        self.networks
+            .iter()
+            .map(|(interface_name, data)| NetworkSample {
+                interface_name: interface_name.to_string(),
+                received_delta_bytes: data.received(),
+                transmitted_delta_bytes: data.transmitted(),
+                received_total_bytes: data.total_received(),
+                transmitted_total_bytes: data.total_transmitted(),
+                packets_received_delta: data.packets_received(),
+                packets_transmitted_delta: data.packets_transmitted(),
+                errors_received_delta: data.errors_on_received(),
+                errors_transmitted_delta: data.errors_on_transmitted(),
+            })
+            .collect()
+    }
+}
+
+fn cached_process_details(
+    cache: &mut HashMap<ProcessIdentity, CachedProcessDetails>,
+    identity: &ProcessIdentity,
+    pid: u32,
+    process: &sysinfo::Process,
+) -> ProcessDetails {
+    if let Some(cached) = cache.get(identity)
+        && cached.refreshed_at.elapsed() < PROCESS_DETAILS_REFRESH_INTERVAL
+    {
+        return cached.details.clone();
+    }
+
+    let details = process_details(pid, process);
+    cache.insert(
+        identity.clone(),
+        CachedProcessDetails {
+            refreshed_at: Instant::now(),
+            details: details.clone(),
+        },
+    );
+    details
 }
 
 impl SampleSource for SysinfoSampler {
@@ -321,6 +393,9 @@ mod tests {
             processes: Vec::new(),
             sample_interval: Duration::from_secs(1),
             logical_cpu_count: 1,
+            networks: Vec::new(),
+            network_received_delta_bytes: 0,
+            network_transmitted_delta_bytes: 0,
         };
         let mut source = vec![sample.clone()];
         assert_eq!(source.sample().unwrap().total_memory_bytes, 1);

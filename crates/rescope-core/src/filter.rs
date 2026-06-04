@@ -5,14 +5,27 @@ use regex::{Regex, RegexBuilder};
 
 pub fn filter_sample(sample: &SystemSample, filters: &FilterSpec) -> SystemSample {
     let matcher = CompiledFilter::new(filters);
-    let mut filtered = sample.clone();
-    filtered.processes = sample
-        .processes
-        .iter()
-        .filter(|process| matcher.matches(process))
-        .cloned()
-        .collect();
-    filtered
+    filter_sample_with(sample, &matcher)
+}
+
+pub fn filter_sample_with(sample: &SystemSample, matcher: &CompiledFilter) -> SystemSample {
+    SystemSample {
+        timestamp: sample.timestamp,
+        total_memory_bytes: sample.total_memory_bytes,
+        available_memory_bytes: sample.available_memory_bytes,
+        global_cpu_percent: sample.global_cpu_percent,
+        processes: sample
+            .processes
+            .iter()
+            .filter(|process| matcher.matches(process))
+            .cloned()
+            .collect(),
+        sample_interval: sample.sample_interval,
+        logical_cpu_count: sample.logical_cpu_count,
+        networks: sample.networks.clone(),
+        network_received_delta_bytes: sample.network_received_delta_bytes,
+        network_transmitted_delta_bytes: sample.network_transmitted_delta_bytes,
+    }
 }
 
 pub fn matches_filters(process_sample: &RawProcessSample, filters: &FilterSpec) -> bool {

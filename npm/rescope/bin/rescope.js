@@ -71,16 +71,30 @@ function main() {
     process.exit(1);
   }
 
-  const result = child_process.spawnSync(binary, process.argv.slice(2), {
+  const child = child_process.spawn(binary, process.argv.slice(2), {
     stdio: "inherit"
   });
 
-  if (result.error) {
-    console.error(result.error.message);
+  child.on("error", (error) => {
+    console.error(error.message);
     process.exit(1);
+  });
+
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+    process.on(signal, () => {
+      if (!child.killed) {
+        child.kill(signal);
+      }
+    });
   }
 
-  process.exit(result.status === null ? 1 : result.status);
+  child.on("exit", (code, signal) => {
+    if (signal) {
+      process.kill(process.pid, signal);
+      return;
+    }
+    process.exit(code === null ? 1 : code);
+  });
 }
 
 if (require.main === module) {

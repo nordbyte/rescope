@@ -93,10 +93,12 @@ pub fn render_snapshot_with_options(
             .saturating_sub(report.available_memory_bytes);
         writeln!(
             &mut output,
-            "System: CPU {:.1}% | RAM {} / {} | processes {} | interval {}",
+            "System: CPU {:.1}% | RAM {} / {} | NET in {} out {} | processes {} | interval {}",
             report.global_cpu_percent,
             format_bytes(used, raw_bytes),
             format_bytes(report.total_memory_bytes, raw_bytes),
+            format_bytes(report.network_received_delta_bytes, raw_bytes),
+            format_bytes(report.network_transmitted_delta_bytes, raw_bytes),
             report.process_total,
             humantime::format_duration(report.interval)
         )
@@ -136,7 +138,13 @@ pub fn render_snapshot_with_options(
                 table.add_row(cells);
             }
         }
-        GroupBy::Name | GroupBy::Command | GroupBy::Executable | GroupBy::Parent => {
+        GroupBy::Name
+        | GroupBy::Command
+        | GroupBy::Executable
+        | GroupBy::Parent
+        | GroupBy::Cgroup
+        | GroupBy::Systemd
+        | GroupBy::Container => {
             table.set_header(snapshot_group_header(report.group_by, &options, color));
             for (index, row) in report.rows[row_range.clone()].iter().enumerate() {
                 let absolute_index = row_range.start + index;
@@ -229,6 +237,13 @@ pub fn render_recording(
         report.sort_by
     )
     .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "network: in {} | out {}",
+        format_bytes(report.network_received_delta_bytes, raw_bytes),
+        format_bytes(report.network_transmitted_delta_bytes, raw_bytes)
+    )
+    .expect("writing to a string cannot fail");
     writeln!(&mut output, "filters: {}", describe_filters(report))
         .expect("writing to a string cannot fail");
     output.push('\n');
@@ -236,8 +251,15 @@ pub fn render_recording(
     if report.rows.is_empty() {
         output.push_str("no matching processes\n");
     } else {
-        output.push_str(&render_recording_table(report, raw_bytes, color));
+        output.push_str(&render_recording_table(
+            report,
+            raw_bytes,
+            color,
+            compact_recording_table(),
+        ));
         if timeline_limit > 0 {
+            output.push_str(&render_cpu_timeline(report, timeline_limit));
+            output.push_str(&render_io_timeline(report, raw_bytes, timeline_limit));
             output.push_str(&render_ram_timeline(report, raw_bytes, timeline_limit));
         }
     }
@@ -252,7 +274,12 @@ pub fn render_recording(
     output
 }
 
-fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool) -> String {
+fn render_recording_table(
+    report: &RecordingReport,
+    raw_bytes: bool,
+    color: bool,
+    compact: bool,
+) -> String {
     let mut table = plain_table();
     match report.group_by {
         GroupBy::Process => {
@@ -260,11 +287,11 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
             if report.show_path {
                 header.push("PATH");
             }
+            header.extend(["CPU avg", "CPU max", "CPU p95"]);
+            if !compact {
+                header.push("CPU p99");
+            }
             header.extend([
-                "CPU avg",
-                "CPU max",
-                "CPU p95",
-                "CPU p99",
                 "CPU-s",
                 "RAM start",
                 "RAM end",
@@ -277,10 +304,11 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
                 "AVG I/O",
                 "START",
                 "EXIT",
-                "first",
-                "last",
-                "STATUS",
             ]);
+            if !compact {
+                header.extend(["first", "last"]);
+            }
+            header.push("STATUS");
             table.set_header(header);
             for row in &report.rows {
                 let mut cells = vec![
@@ -294,21 +322,22 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
                 if report.show_path {
                     cells.push(path_cell(row.executable_path.as_deref()));
                 }
-                cells.extend([
-                    cpu_avg(row, report, color),
-                    cpu_max(row, report, color),
-                    cpu_percent_cell(
-                        row.cpu_p95_percent,
-                        report.logical_cpu_count,
-                        report.cpu_normalized,
-                        color,
-                    ),
-                    cpu_percent_cell(
+                cells.extend([cpu_avg(row, report, color), cpu_max(row, report, color)]);
+                cells.push(cpu_percent_cell(
+                    row.cpu_p95_percent,
+                    report.logical_cpu_count,
+                    report.cpu_normalized,
+                    color,
+                ));
+                if !compact {
+                    cells.push(cpu_percent_cell(
                         row.cpu_p99_percent,
                         report.logical_cpu_count,
                         report.cpu_normalized,
                         color,
-                    ),
+                    ));
+                }
+                cells.extend([
                     cell(format!("{:.1}", row.cpu_core_seconds)),
                     cell(format_bytes(row.ram_start_bytes, raw_bytes)),
                     cell(format_bytes(row.ram_end_bytes, raw_bytes)),
@@ -321,15 +350,25 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
                     cell(format_bps(row.io_bytes_per_second_avg, raw_bytes)),
                     cell(row.started_count.to_string()),
                     cell(row.exited_count.to_string()),
-                    cell(humantime::format_rfc3339_seconds(row.first_seen).to_string()),
-                    cell(humantime::format_rfc3339_seconds(row.last_seen).to_string()),
-                    lifecycle_cell(&row.lifecycle_status),
                 ]);
+                if !compact {
+                    cells.extend([
+                        cell(humantime::format_rfc3339_seconds(row.first_seen).to_string()),
+                        cell(humantime::format_rfc3339_seconds(row.last_seen).to_string()),
+                    ]);
+                }
+                cells.push(lifecycle_cell(&row.lifecycle_status));
                 table.add_row(cells);
             }
         }
-        GroupBy::Name | GroupBy::Command | GroupBy::Executable | GroupBy::Parent => {
-            table.set_header(vec![
+        GroupBy::Name
+        | GroupBy::Command
+        | GroupBy::Executable
+        | GroupBy::Parent
+        | GroupBy::Cgroup
+        | GroupBy::Systemd
+        | GroupBy::Container => {
+            let mut header = vec![
                 group_label(report.group_by),
                 "PROCS",
                 "USERS",
@@ -338,20 +377,16 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
                 "CPU p95",
                 "CPU-s",
                 "RAM p95",
-                "RAM start",
-                "RAM end",
-                "RAM max",
-                "RAM Δ",
-                "READ",
-                "WRITE",
-                "I/O p95",
-                "AVG I/O",
-                "START",
-                "EXIT",
-                "STATUS",
+            ];
+            if !compact {
+                header.extend(["RAM start", "RAM end", "RAM max"]);
+            }
+            header.extend([
+                "RAM Δ", "READ", "WRITE", "I/O p95", "AVG I/O", "START", "EXIT", "STATUS",
             ]);
+            table.set_header(header);
             for row in &report.rows {
-                table.add_row(vec![
+                let mut cells = vec![
                     group_cell(&row.display_name, report.group_by),
                     cell(row.process_count.to_string()),
                     truncated_cell(
@@ -368,9 +403,6 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
                     ),
                     cell(format!("{:.1}", row.cpu_core_seconds)),
                     cell(format_bytes(row.ram_p95_bytes, raw_bytes)),
-                    cell(format_bytes(row.ram_start_bytes, raw_bytes)),
-                    cell(format_bytes(row.ram_end_bytes, raw_bytes)),
-                    cell(format_bytes(row.ram_max_bytes, raw_bytes)),
                     signed_bytes_cell(row.ram_delta_bytes, raw_bytes, color),
                     cell(format_bytes(row.disk_read_total_bytes, raw_bytes)),
                     cell(format_bytes(row.disk_write_total_bytes, raw_bytes)),
@@ -379,7 +411,13 @@ fn render_recording_table(report: &RecordingReport, raw_bytes: bool, color: bool
                     cell(row.started_count.to_string()),
                     cell(row.exited_count.to_string()),
                     lifecycle_cell(&row.lifecycle_status),
-                ]);
+                ];
+                if !compact {
+                    cells.insert(8, cell(format_bytes(row.ram_start_bytes, raw_bytes)));
+                    cells.insert(9, cell(format_bytes(row.ram_end_bytes, raw_bytes)));
+                    cells.insert(10, cell(format_bytes(row.ram_max_bytes, raw_bytes)));
+                }
+                table.add_row(cells);
             }
         }
         GroupBy::User => {
@@ -611,6 +649,89 @@ fn render_ram_timeline(report: &RecordingReport, raw_bytes: bool, timeline_limit
     output
 }
 
+fn render_cpu_timeline(report: &RecordingReport, timeline_limit: usize) -> String {
+    let mut rows = report.rows.clone();
+    rows.sort_by_key(|row| Reverse((row.cpu_max_percent * 10.0).round() as u64));
+    rows.truncate(timeline_limit);
+
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::new();
+    output.push('\n');
+    writeln!(&mut output, "CPU timeline, top {} by CPU max:", rows.len())
+        .expect("writing to a string cannot fail");
+    for row in rows {
+        let values = row
+            .cpu_timeline
+            .iter()
+            .map(|(_, cpu)| (*cpu * 10.0).round().max(0.0) as u64)
+            .collect::<Vec<_>>();
+        let start = row
+            .cpu_timeline
+            .first()
+            .map(|(_, cpu)| format!("{cpu:.1}%"))
+            .unwrap_or_else(|| "0.0%".to_string());
+        let end = row
+            .cpu_timeline
+            .last()
+            .map(|(_, cpu)| format!("{cpu:.1}%"))
+            .unwrap_or_else(|| "0.0%".to_string());
+        let display_name = truncate_for_table(&row.display_name, TIMELINE_DISPLAY_MAX_CHARS);
+        writeln!(
+            &mut output,
+            "{:<20} {:>10} {} {:>10}",
+            display_name,
+            start,
+            sparkline::render(&values, 40),
+            end
+        )
+        .expect("writing to a string cannot fail");
+    }
+    output
+}
+
+fn render_io_timeline(report: &RecordingReport, raw_bytes: bool, timeline_limit: usize) -> String {
+    let mut rows = report.rows.clone();
+    rows.sort_by_key(|row| Reverse(row.disk_io_total_bytes));
+    rows.truncate(timeline_limit);
+
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::new();
+    output.push('\n');
+    writeln!(
+        &mut output,
+        "I/O timeline, top {} by total I/O:",
+        rows.len()
+    )
+    .expect("writing to a string cannot fail");
+    for row in rows {
+        let values = row
+            .read_timeline
+            .iter()
+            .zip(row.write_timeline.iter())
+            .map(|((_, read), (_, write))| read + write)
+            .collect::<Vec<_>>();
+        let start = values.first().copied().unwrap_or(0);
+        let end = values.last().copied().unwrap_or(0);
+        let display_name = truncate_for_table(&row.display_name, TIMELINE_DISPLAY_MAX_CHARS);
+        writeln!(
+            &mut output,
+            "{:<20} {:>10} {} {:>10}",
+            display_name,
+            format_bytes(start, raw_bytes),
+            sparkline::render(&values, 40),
+            format_bytes(end, raw_bytes)
+        )
+        .expect("writing to a string cannot fail");
+    }
+    output
+}
+
 fn describe_filters(report: &RecordingReport) -> String {
     let filters = &report.filters;
     let mut parts = Vec::new();
@@ -706,6 +827,8 @@ fn group_cell(value: &str, group_by: GroupBy) -> Cell {
         GroupBy::Command => COMMAND_DISPLAY_MAX_CHARS,
         GroupBy::Executable => EXECUTABLE_DISPLAY_MAX_CHARS,
         GroupBy::Parent => PARENT_DISPLAY_MAX_CHARS,
+        GroupBy::Cgroup => EXECUTABLE_DISPLAY_MAX_CHARS,
+        GroupBy::Systemd | GroupBy::Container => PROCESS_DISPLAY_MAX_CHARS,
         GroupBy::Name | GroupBy::Process | GroupBy::User => PROCESS_DISPLAY_MAX_CHARS,
     };
     truncated_cell(value, max_chars)
@@ -719,6 +842,12 @@ fn lifecycle_cell(value: &str) -> Cell {
         "started_and_exited_during_recording" => cell("started+exited"),
         _ => truncated_cell(value, TOP_PROCESS_MAX_CHARS),
     }
+}
+
+fn compact_recording_table() -> bool {
+    crossterm::terminal::size()
+        .map(|(width, _)| width < 140)
+        .unwrap_or(false)
 }
 
 fn truncate_for_table(value: &str, max_chars: usize) -> String {
@@ -804,6 +933,9 @@ fn group_label(group_by: GroupBy) -> &'static str {
         GroupBy::Command => "COMMAND",
         GroupBy::Executable => "EXECUTABLE",
         GroupBy::Parent => "PARENT",
+        GroupBy::Cgroup => "CGROUP",
+        GroupBy::Systemd => "SYSTEMD",
+        GroupBy::Container => "CONTAINER",
     }
 }
 
@@ -849,6 +981,8 @@ mod tests {
             total_memory_bytes: 1024,
             available_memory_bytes: 512,
             global_cpu_percent: 0.0,
+            network_received_delta_bytes: 0,
+            network_transmitted_delta_bytes: 0,
             process_total: 2,
             logical_cpu_count: 1,
             cpu_normalized: false,
@@ -888,6 +1022,8 @@ mod tests {
             total_memory_bytes: 1024,
             available_memory_bytes: 512,
             global_cpu_percent: 0.0,
+            network_received_delta_bytes: 0,
+            network_transmitted_delta_bytes: 0,
             process_total: 1,
             logical_cpu_count: 1,
             cpu_normalized: false,
@@ -906,6 +1042,7 @@ mod tests {
             key: GroupKey::Name(name.to_string()),
             group_type: GroupBy::Process,
             display_name: name.to_string(),
+            process_identity: None,
             pid: Some(pid),
             user_name: Some("alice".to_string()),
             executable_path: Some(format!("/usr/bin/{name}")),

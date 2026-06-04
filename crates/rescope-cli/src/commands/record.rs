@@ -3,10 +3,11 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use rescope_core::{
-    RecordingAccumulator, RecordingAccumulatorOptions, RecordingReportOptions, SampleSource,
-    SamplerConfig, SysinfoSampler, build_recording_report_from_accumulator, filter_sample,
-    units::MINIMUM_INTERVAL,
+    CompiledFilter, RecordingAccumulator, RecordingAccumulatorOptions, RecordingReportOptions,
+    SampleSource, SamplerConfig, SysinfoSampler, SystemSample,
+    build_recording_report_from_accumulator, filter_sample_with, units::MINIMUM_INTERVAL,
 };
+use serde::Serialize;
 
 use crate::args::{Cli, RecordArgs};
 use crate::commands::verbose;
@@ -37,6 +38,8 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
         ),
     );
     sampler.warm_up(args.interval)?;
+    let matcher = CompiledFilter::new(&filter);
+    let mut raw_samples = args.raw_samples.as_ref().map(|_| Vec::new());
 
     if !cli.quiet {
         eprintln!(
@@ -59,7 +62,10 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
 
     while Instant::now() < deadline {
         let sample = sampler.sample()?;
-        let filtered = filter_sample(&sample, &filter);
+        if let Some(samples) = raw_samples.as_mut() {
+            samples.push(sample.clone());
+        }
+        let filtered = filter_sample_with(&sample, &matcher);
         verbose(
             cli,
             format!(
@@ -102,10 +108,26 @@ pub fn run(cli: &Cli, args: &RecordArgs) -> Result<()> {
         csv::write_recording(path, &report)
             .with_context(|| format!("writing {}", path.display()))?;
     }
+    if let (Some(path), Some(samples)) = (&args.raw_samples, raw_samples) {
+        let raw_report = RawSamplesReport {
+            interval_ms: args.interval.as_millis().min(u64::MAX as u128) as u64,
+            sample_count: samples.len(),
+            samples,
+        };
+        json::write_custom(path, "raw-samples", &raw_report)
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
 
     if !cli.quiet && !json::writes_stdout(&cli.json) && !csv::writes_stdout(&cli.csv) {
         table::print_recording(&report, cli.bytes, args.timeline, cli.color_enabled());
     }
 
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct RawSamplesReport {
+    interval_ms: u64,
+    sample_count: usize,
+    samples: Vec<SystemSample>,
 }

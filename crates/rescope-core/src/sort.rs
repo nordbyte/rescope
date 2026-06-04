@@ -137,6 +137,7 @@ mod tests {
             key: GroupKey::Name(name.to_string()),
             group_type: GroupBy::Name,
             display_name: name.to_string(),
+            process_identity: None,
             pid: None,
             user_name: None,
             executable_path: None,

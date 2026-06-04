@@ -3,15 +3,15 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use rescope_core::{
-    SampleSource, SamplerConfig, SnapshotReportOptions, SysinfoSampler, build_snapshot_report,
-    filter_sample, units::MINIMUM_INTERVAL,
+    CompiledFilter, SampleSource, SamplerConfig, SnapshotReportOptions, SysinfoSampler,
+    build_snapshot_report, filter_sample_with, units::MINIMUM_INTERVAL,
 };
 
 use crate::args::{Cli, WatchArgs};
-use crate::commands::verbose;
+use crate::commands::{CommandOutcome, verbose};
 use crate::output::{csv, json, table};
 
-pub fn run(cli: &Cli, args: &WatchArgs) -> Result<()> {
+pub fn run(cli: &Cli, args: &WatchArgs) -> Result<CommandOutcome> {
     if cli.stdout_export_count() > 1 {
         bail!("only one of --json - or --csv - can write to stdout");
     }
@@ -38,14 +38,16 @@ pub fn run(cli: &Cli, args: &WatchArgs) -> Result<()> {
         ),
     );
     sampler.warm_up(args.interval)?;
+    let matcher = CompiledFilter::new(&filter);
 
     let started = Instant::now();
     let deadline = started + args.duration;
     let mut matched = false;
+    let mut matched_since: Option<Instant> = None;
 
     while Instant::now() < deadline {
         let sample = sampler.sample()?;
-        let filtered = filter_sample(&sample, &filter);
+        let filtered = filter_sample_with(&sample, &matcher);
         let report = build_snapshot_report(
             &filtered,
             SnapshotReportOptions {
@@ -64,7 +66,23 @@ pub fn run(cli: &Cli, args: &WatchArgs) -> Result<()> {
             table::print_snapshot(&report, cli.bytes, true, cli.color_enabled());
         }
 
-        if !report.rows.is_empty() {
+        let now = Instant::now();
+        if report.rows.is_empty() {
+            matched_since = None;
+        } else {
+            let first_seen = *matched_since.get_or_insert(now);
+            if now.saturating_duration_since(first_seen) < args.for_duration {
+                if !cli.quiet && cli.verbose > 0 {
+                    eprintln!(
+                        "rescope alert matched for {}, waiting for {}",
+                        humantime::format_duration(now.saturating_duration_since(first_seen)),
+                        humantime::format_duration(args.for_duration)
+                    );
+                }
+                sleep_until_next_sample(now, deadline, args.interval);
+                continue;
+            }
+
             matched = true;
             if let Some(path) = &cli.json {
                 json::write_snapshot(path, &report)
@@ -87,19 +105,15 @@ pub fn run(cli: &Cli, args: &WatchArgs) -> Result<()> {
                 table::print_snapshot(&report, cli.bytes, true, cli.color_enabled());
             }
             if !args.stream {
-                std::process::exit(args.exit_code.into());
+                return Ok(CommandOutcome::with_exit_code(args.exit_code));
             }
         }
 
-        let now = Instant::now();
-        if now >= deadline {
-            break;
-        }
-        thread::sleep(args.interval.min(deadline - now));
+        sleep_until_next_sample(now, deadline, args.interval);
     }
 
     if matched {
-        std::process::exit(args.exit_code.into());
+        return Ok(CommandOutcome::with_exit_code(args.exit_code));
     }
     if !cli.quiet {
         eprintln!(
@@ -108,5 +122,12 @@ pub fn run(cli: &Cli, args: &WatchArgs) -> Result<()> {
         );
     }
 
-    Ok(())
+    Ok(CommandOutcome::success())
+}
+
+fn sleep_until_next_sample(now: Instant, deadline: Instant, interval: std::time::Duration) {
+    if now >= deadline {
+        return;
+    }
+    thread::sleep(interval.min(deadline - now));
 }

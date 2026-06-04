@@ -46,8 +46,12 @@ The first example requires both user and name to match. The second matches eithe
 - `--group command`
 - `--group executable`
 - `--group parent`
+- `--group cgroup`
+- `--group systemd`
+- `--group container`
 
 Parent grouping displays parent PID plus parent process name when available, for example `1 (systemd)`. Command grouping intentionally exposes command lines because the user explicitly requested command-line aggregation. Executable grouping displays executable paths because path grouping is explicitly requested.
+Cgroup grouping displays the full Linux cgroup path. Systemd grouping extracts a `.service`, `.scope` or `.slice` unit from that path. Container grouping extracts common Docker, containerd and Podman IDs when present and uses `host` otherwise.
 
 Use `rescope tree` when parent-child ancestry matters more than flat grouping. Tree output keeps individual process nodes and adds subtree totals for CPU, RAM and I/O.
 

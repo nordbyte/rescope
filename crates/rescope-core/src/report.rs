@@ -56,6 +56,8 @@ pub fn build_snapshot_report(
         total_memory_bytes: sample.total_memory_bytes,
         available_memory_bytes: sample.available_memory_bytes,
         global_cpu_percent: sample.global_cpu_percent,
+        network_received_delta_bytes: sample.network_received_delta_bytes,
+        network_transmitted_delta_bytes: sample.network_transmitted_delta_bytes,
         process_total: sample.processes.len(),
         logical_cpu_count: sample.logical_cpu_count,
         cpu_normalized: options.normalize_cpu,
@@ -105,6 +107,14 @@ pub fn build_recording_report(
             .map(|sample| sample.logical_cpu_count)
             .max()
             .unwrap_or(1),
+        network_received_delta_bytes: samples
+            .iter()
+            .map(|sample| sample.network_received_delta_bytes)
+            .sum(),
+        network_transmitted_delta_bytes: samples
+            .iter()
+            .map(|sample| sample.network_transmitted_delta_bytes)
+            .sum(),
         cpu_normalized: options.normalize_cpu,
         show_path: options.show_path,
         rows,
@@ -120,6 +130,8 @@ pub fn build_recording_report_from_accumulator(
     let ended_at = accumulator.ended_at().unwrap_or(started_at);
     let sample_count = accumulator.sample_count();
     let logical_cpu_count = accumulator.logical_cpu_count();
+    let network_received_delta_bytes = accumulator.network_received_delta_bytes();
+    let network_transmitted_delta_bytes = accumulator.network_transmitted_delta_bytes();
     let rows = accumulator.into_rows(options.requested_duration, options.limit);
 
     RecordingReport {
@@ -132,6 +144,8 @@ pub fn build_recording_report_from_accumulator(
         sort_by: options.sort_by,
         filters: options.filters,
         logical_cpu_count,
+        network_received_delta_bytes,
+        network_transmitted_delta_bytes,
         cpu_normalized: options.normalize_cpu,
         show_path: options.show_path,
         rows,

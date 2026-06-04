@@ -20,13 +20,17 @@ RAM is resident memory when the platform exposes that metric. Recording reports 
 
 Read and write totals are calculated from per-process counters. The first appearance of a process identity has zero delta so pre-existing I/O is not counted as recording activity. Recording reports include approximate p95 combined I/O per sample.
 
+## Network I/O
+
+System network receive/transmit deltas are captured per sample from platform network counters. Snapshot reports include the latest system delta; recording reports sum those deltas across the measured window.
+
 ## Lifecycle counts
 
 Recording rows include `started_count` and `exited_count`. For process rows these count the selected process identity. For grouped rows they count process identities that first appeared after the recording started or disappeared before it ended.
 
 ## Process details
 
-When the platform exposes them, process rows include status, runtime, accumulated CPU time, thread count, open file count and Linux cgroup path. Missing fields are omitted from JSON and left empty in CSV.
+When the platform exposes them, process rows include status, runtime, accumulated CPU time, thread count, open file count and Linux cgroup path. Missing fields are omitted from JSON and left empty in CSV. Linux `/proc`-derived details are cached briefly per process identity during live sampling.
 
 ## Percentile accuracy
 

@@ -1,6 +1,7 @@
 pub mod aggregate;
 pub mod error;
 pub mod filter;
+pub mod grouping;
 pub mod metrics;
 pub mod report;
 pub mod sampling;
@@ -11,7 +12,7 @@ pub use aggregate::{
     RecordingAccumulator, RecordingAccumulatorOptions, aggregate_recording, aggregate_snapshot,
 };
 pub use error::RescopeError;
-pub use filter::{CompiledFilter, filter_sample};
+pub use filter::{CompiledFilter, filter_sample, filter_sample_with};
 pub use metrics::*;
 pub use report::{
     RecordingReportOptions, SnapshotReportOptions, build_recording_report,

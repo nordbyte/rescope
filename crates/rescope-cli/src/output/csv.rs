@@ -5,23 +5,7 @@ use anyhow::Result;
 use rescope_core::{RecordingReport, SnapshotReport, metrics::system_time_ms};
 
 pub fn write_snapshot(path: &Path, report: &SnapshotReport) -> Result<()> {
-    if path == Path::new("-") {
-        let stdout = io::stdout();
-        let mut writer = csv::Writer::from_writer(stdout.lock());
-        write_snapshot_rows(&mut writer, report)?;
-        writer.flush()?;
-        return Ok(());
-    }
-
-    let mut temp_file = temp_file_for(path)?;
-    {
-        let mut writer = csv::Writer::from_writer(temp_file.as_file_mut());
-        write_snapshot_rows(&mut writer, report)?;
-        writer.flush()?;
-    }
-    temp_file.as_file_mut().sync_all()?;
-    temp_file.persist(path)?;
-    Ok(())
+    write_custom(path, |writer| write_snapshot_rows(writer, report))
 }
 
 pub fn writes_stdout(path: &Option<std::path::PathBuf>) -> bool {
@@ -94,18 +78,28 @@ fn write_snapshot_rows<W: io::Write>(
 }
 
 pub fn write_recording(path: &Path, report: &RecordingReport) -> Result<()> {
+    write_custom(path, |writer| write_recording_rows(writer, report))
+}
+
+pub fn write_custom<F>(path: &Path, write_rows: F) -> Result<()>
+where
+    F: FnOnce(&mut csv::Writer<&mut dyn io::Write>) -> Result<()>,
+{
     if path == Path::new("-") {
         let stdout = io::stdout();
-        let mut writer = csv::Writer::from_writer(stdout.lock());
-        write_recording_rows(&mut writer, report)?;
+        let mut handle = stdout.lock();
+        let target: &mut dyn io::Write = &mut handle;
+        let mut writer = csv::Writer::from_writer(target);
+        write_rows(&mut writer)?;
         writer.flush()?;
         return Ok(());
     }
 
     let mut temp_file = temp_file_for(path)?;
     {
-        let mut writer = csv::Writer::from_writer(temp_file.as_file_mut());
-        write_recording_rows(&mut writer, report)?;
+        let target: &mut dyn io::Write = temp_file.as_file_mut();
+        let mut writer = csv::Writer::from_writer(target);
+        write_rows(&mut writer)?;
         writer.flush()?;
     }
     temp_file.as_file_mut().sync_all()?;

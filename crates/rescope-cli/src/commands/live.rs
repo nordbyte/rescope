@@ -4,20 +4,23 @@ use std::thread;
 
 use anyhow::{Result, bail};
 use rescope_core::{
-    SampleSource, SamplerConfig, SnapshotReport, SnapshotReportOptions, SysinfoSampler,
-    build_snapshot_report, filter_sample, metrics::system_time_ms, units::MINIMUM_INTERVAL,
+    CompiledFilter, SampleSource, SamplerConfig, SnapshotReport, SnapshotReportOptions,
+    SysinfoSampler, build_snapshot_report, filter_sample_with, metrics::system_time_ms,
+    units::MINIMUM_INTERVAL,
 };
 use serde::Serialize;
 
 use crate::args::{Cli, LiveArgs};
 use crate::commands::verbose;
-use crate::output::{csv, json, table, terminal};
+use crate::output::{csv, json, prometheus::PrometheusSink, table, terminal};
 use crate::tui;
 
 pub fn run(cli: &Cli, args: &LiveArgs) -> Result<()> {
     rescope_core::error::validate_interval(args.interval, MINIMUM_INTERVAL)?;
     if stdout_output_count(cli, args) > 1 {
-        bail!("only one of --json - or --csv - can write to stdout");
+        bail!(
+            "only one live output stream can write to stdout at a time (--json -, --csv -, --jsonl -, --csv-stream -, or --prometheus -)"
+        );
     }
     if (cli.json.is_some() || cli.csv.is_some()) && !args.once {
         bail!(
@@ -52,6 +55,7 @@ pub fn run(cli: &Cli, args: &LiveArgs) -> Result<()> {
         ),
     );
     sampler.warm_up(args.interval)?;
+    let matcher = CompiledFilter::new(&filter);
     let mut jsonl = args
         .jsonl
         .as_ref()
@@ -62,10 +66,15 @@ pub fn run(cli: &Cli, args: &LiveArgs) -> Result<()> {
         .as_ref()
         .map(|path| csv_stream_writer(path))
         .transpose()?;
+    let mut prometheus = args
+        .prometheus
+        .as_deref()
+        .map(PrometheusSink::new)
+        .transpose()?;
 
     loop {
         let sample = sampler.sample()?;
-        let filtered = filter_sample(&sample, &filter);
+        let filtered = filter_sample_with(&sample, &matcher);
         if args.once {
             verbose(
                 cli,
@@ -94,6 +103,9 @@ pub fn run(cli: &Cli, args: &LiveArgs) -> Result<()> {
         }
         if let Some(writer) = csv_stream.as_mut() {
             write_csv_stream_snapshot(writer, &report)?;
+        }
+        if let Some(prometheus) = prometheus.as_mut() {
+            prometheus.publish(&report)?;
         }
 
         if args.once {
@@ -141,10 +153,13 @@ fn stdout_output_count(cli: &Cli, args: &LiveArgs) -> usize {
     cli.stdout_export_count()
         + path_writes_stdout(&args.jsonl) as usize
         + path_writes_stdout(&args.csv_stream) as usize
+        + PrometheusSink::writes_stdout(&args.prometheus) as usize
 }
 
 fn streams_stdout(args: &LiveArgs) -> bool {
-    path_writes_stdout(&args.jsonl) || path_writes_stdout(&args.csv_stream)
+    path_writes_stdout(&args.jsonl)
+        || path_writes_stdout(&args.csv_stream)
+        || PrometheusSink::writes_stdout(&args.prometheus)
 }
 
 fn path_writes_stdout(path: &Option<std::path::PathBuf>) -> bool {

@@ -10,5 +10,9 @@ use crate::args::Cli;
 
 fn main() -> Result<()> {
     let cli = Cli::parse().apply_config()?;
-    commands::run(cli)
+    let outcome = commands::run(cli)?;
+    if outcome.exit_code != 0 {
+        std::process::exit(outcome.exit_code.into());
+    }
+    Ok(())
 }

@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -11,6 +11,9 @@ pub enum GroupBy {
     Command,
     Executable,
     Parent,
+    Cgroup,
+    Systemd,
+    Container,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,19 +91,25 @@ impl ProcessDetails {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawProcessSample {
-    #[serde(serialize_with = "serialize_system_time_ms")]
+    #[serde(
+        serialize_with = "serialize_system_time_ms",
+        deserialize_with = "deserialize_system_time_ms"
+    )]
     pub timestamp: SystemTime,
     pub identity: ProcessIdentity,
+    #[serde(default)]
     pub user_id: Option<String>,
+    #[serde(default)]
     pub user_name: Option<String>,
+    #[serde(default)]
     pub parent_pid: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub executable: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     pub memory_bytes: u64,
     pub virtual_memory_bytes: u64,
@@ -109,7 +118,7 @@ pub struct RawProcessSample {
     pub disk_total_write_bytes: u64,
     pub disk_read_delta_bytes: u64,
     pub disk_write_delta_bytes: u64,
-    #[serde(skip_serializing_if = "ProcessDetails::is_empty")]
+    #[serde(default, skip_serializing_if = "ProcessDetails::is_empty")]
     pub details: ProcessDetails,
 }
 
@@ -140,9 +149,25 @@ impl RawProcessSample {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NetworkSample {
+    pub interface_name: String,
+    pub received_delta_bytes: u64,
+    pub transmitted_delta_bytes: u64,
+    pub received_total_bytes: u64,
+    pub transmitted_total_bytes: u64,
+    pub packets_received_delta: u64,
+    pub packets_transmitted_delta: u64,
+    pub errors_received_delta: u64,
+    pub errors_transmitted_delta: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemSample {
-    #[serde(serialize_with = "serialize_system_time_ms")]
+    #[serde(
+        serialize_with = "serialize_system_time_ms",
+        deserialize_with = "deserialize_system_time_ms"
+    )]
     pub timestamp: SystemTime,
     pub total_memory_bytes: u64,
     pub available_memory_bytes: u64,
@@ -150,13 +175,20 @@ pub struct SystemSample {
     pub processes: Vec<RawProcessSample>,
     #[serde(
         rename = "sample_interval_ms",
-        serialize_with = "serialize_duration_ms"
+        serialize_with = "serialize_duration_ms",
+        deserialize_with = "deserialize_duration_ms"
     )]
     pub sample_interval: Duration,
     pub logical_cpu_count: usize,
+    #[serde(default)]
+    pub networks: Vec<NetworkSample>,
+    #[serde(default)]
+    pub network_received_delta_bytes: u64,
+    #[serde(default)]
+    pub network_transmitted_delta_bytes: u64,
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GroupKey {
     Process(ProcessIdentity),
@@ -165,6 +197,9 @@ pub enum GroupKey {
     Command(String),
     Executable(String),
     Parent(String),
+    Cgroup(String),
+    Systemd(String),
+    Container(String),
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -173,6 +208,8 @@ pub struct SnapshotRow {
     pub key: GroupKey,
     pub group_type: GroupBy,
     pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_identity: Option<ProcessIdentity>,
     pub pid: Option<u32>,
     pub user_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -201,6 +238,8 @@ pub struct AggregateRow {
     pub key: GroupKey,
     pub group_type: GroupBy,
     pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process_identity: Option<ProcessIdentity>,
     pub pid: Option<u32>,
     pub user_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -263,6 +302,8 @@ pub struct SnapshotReport {
     pub total_memory_bytes: u64,
     pub available_memory_bytes: u64,
     pub global_cpu_percent: f32,
+    pub network_received_delta_bytes: u64,
+    pub network_transmitted_delta_bytes: u64,
     pub process_total: usize,
     pub logical_cpu_count: usize,
     pub cpu_normalized: bool,
@@ -286,6 +327,8 @@ pub struct RecordingReport {
     pub sort_by: SortBy,
     pub filters: FilterSpec,
     pub logical_cpu_count: usize,
+    pub network_received_delta_bytes: u64,
+    pub network_transmitted_delta_bytes: u64,
     pub cpu_normalized: bool,
     pub show_path: bool,
     pub rows: Vec<AggregateRow>,
@@ -310,6 +353,22 @@ where
     S: Serializer,
 {
     serializer.serialize_u64(duration.as_millis().min(u64::MAX as u128) as u64)
+}
+
+pub fn deserialize_system_time_ms<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    Ok(UNIX_EPOCH + Duration::from_millis(value))
+}
+
+pub fn deserialize_duration_ms<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = u64::deserialize(deserializer)?;
+    Ok(Duration::from_millis(value))
 }
 
 pub fn serialize_timeline_ms<S>(

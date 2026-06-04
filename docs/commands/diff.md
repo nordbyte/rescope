@@ -18,6 +18,6 @@ rescope --csv diff.csv diff before.json after.json
 
 ## Compared fields
 
-Rows are matched by group type, PID when present and display name. `diff` reports added, removed and changed rows using CPU, RAM and combined I/O deltas.
+Rows are matched by stable process identity when present, otherwise by group type, PID when present and display name. `diff` reports added, removed and changed rows using CPU, RAM and combined I/O deltas.
 
 Use `--all` to keep every changed row or `--limit <N>` to cap output.

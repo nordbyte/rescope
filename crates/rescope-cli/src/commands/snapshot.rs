@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use rescope_core::{
-    SampleSource, SamplerConfig, SnapshotReportOptions, SysinfoSampler, build_snapshot_report,
-    filter_sample, units::MINIMUM_INTERVAL,
+    CompiledFilter, SampleSource, SamplerConfig, SnapshotReportOptions, SysinfoSampler,
+    build_snapshot_report, filter_sample_with, units::MINIMUM_INTERVAL,
 };
 
 use crate::args::{Cli, SnapshotArgs};
@@ -30,9 +30,10 @@ pub fn run(cli: &Cli, args: &SnapshotArgs) -> Result<()> {
         ),
     );
     sampler.warm_up(args.interval)?;
+    let matcher = CompiledFilter::new(&filter);
 
     let sample = sampler.sample()?;
-    let filtered = filter_sample(&sample, &filter);
+    let filtered = filter_sample_with(&sample, &matcher);
     verbose(
         cli,
         format!(

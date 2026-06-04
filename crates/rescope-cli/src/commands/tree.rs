@@ -1,9 +1,10 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{Context, Result, bail};
 use rescope_core::{
-    ProcessDetails, RawProcessSample, SampleSource, SamplerConfig, SortBy, SysinfoSampler,
-    filter_sample, format_bytes, system_time_ms, units::MINIMUM_INTERVAL,
+    CompiledFilter, ProcessDetails, RawProcessSample, SampleSource, SamplerConfig, SortBy,
+    SysinfoSampler, filter_sample_with, format_bytes, system_time_ms, units::MINIMUM_INTERVAL,
 };
 use serde::Serialize;
 
@@ -45,6 +46,9 @@ pub fn run(cli: &Cli, args: &TreeArgs) -> Result<()> {
     if cli.stdout_export_count() > 1 {
         bail!("only one of --json - or --csv - can write to stdout");
     }
+    if matches!(args.effective_sort(), SortBy::Started | SortBy::Exited) {
+        bail!("tree supports --sort started/exited only for recording reports, not snapshots");
+    }
     rescope_core::error::validate_interval(args.interval, MINIMUM_INTERVAL)?;
 
     let filter = args.filters.to_filter_spec();
@@ -63,9 +67,10 @@ pub fn run(cli: &Cli, args: &TreeArgs) -> Result<()> {
         ),
     );
     sampler.warm_up(args.interval)?;
+    let matcher = CompiledFilter::new(&filter);
 
     let sample = sampler.sample()?;
-    let filtered = filter_sample(&sample, &filter);
+    let filtered = filter_sample_with(&sample, &matcher);
     let nodes = build_tree(
         &filtered.processes,
         args.effective_sort(),
@@ -136,8 +141,7 @@ fn build_children(
     let Some(mut processes) = by_parent.remove(&parent_pid) else {
         return Vec::new();
     };
-    processes
-        .sort_by(|left, right| node_metric(right, sort_by).total_cmp(&node_metric(left, sort_by)));
+    processes.sort_by(|left, right| compare_processes(left, right, sort_by));
 
     processes
         .into_iter()
@@ -166,9 +170,7 @@ fn build_children(
                     .iter()
                     .map(|child| child.subtree_disk_io_delta_bytes)
                     .sum::<u64>();
-            children.sort_by(|left, right| {
-                node_tree_metric(right, sort_by).total_cmp(&node_tree_metric(left, sort_by))
-            });
+            children.sort_by(|left, right| compare_nodes(left, right, sort_by));
             TreeNode {
                 pid: process.identity.pid,
                 parent_pid: process.parent_pid,
@@ -188,6 +190,51 @@ fn build_children(
             }
         })
         .collect()
+}
+
+fn compare_processes(
+    left: &RawProcessSample,
+    right: &RawProcessSample,
+    sort_by: SortBy,
+) -> Ordering {
+    match sort_by {
+        SortBy::Pid => left.identity.pid.cmp(&right.identity.pid),
+        SortBy::Name => left
+            .identity
+            .name
+            .to_ascii_lowercase()
+            .cmp(&right.identity.name.to_ascii_lowercase())
+            .then_with(|| left.identity.pid.cmp(&right.identity.pid)),
+        SortBy::User => left
+            .user_display()
+            .to_ascii_lowercase()
+            .cmp(&right.user_display().to_ascii_lowercase())
+            .then_with(|| left.identity.pid.cmp(&right.identity.pid)),
+        SortBy::Started | SortBy::Exited => left.identity.pid.cmp(&right.identity.pid),
+        _ => node_metric(right, sort_by)
+            .total_cmp(&node_metric(left, sort_by))
+            .then_with(|| left.identity.pid.cmp(&right.identity.pid)),
+    }
+}
+
+fn compare_nodes(left: &TreeNode, right: &TreeNode, sort_by: SortBy) -> Ordering {
+    match sort_by {
+        SortBy::Pid => left.pid.cmp(&right.pid),
+        SortBy::Name => left
+            .name
+            .to_ascii_lowercase()
+            .cmp(&right.name.to_ascii_lowercase())
+            .then_with(|| left.pid.cmp(&right.pid)),
+        SortBy::User => left
+            .user_name
+            .to_ascii_lowercase()
+            .cmp(&right.user_name.to_ascii_lowercase())
+            .then_with(|| left.pid.cmp(&right.pid)),
+        SortBy::Started | SortBy::Exited => left.pid.cmp(&right.pid),
+        _ => node_tree_metric(right, sort_by)
+            .total_cmp(&node_tree_metric(left, sort_by))
+            .then_with(|| left.pid.cmp(&right.pid)),
+    }
 }
 
 fn node_metric(process: &RawProcessSample, sort_by: SortBy) -> f64 {
@@ -297,12 +344,13 @@ fn render_node(
 }
 
 fn write_tree_csv(path: &std::path::Path, report: &TreeReport) -> Result<()> {
-    let mut writer: Box<dyn std::io::Write> = if path == std::path::Path::new("-") {
-        Box::new(std::io::stdout().lock())
-    } else {
-        Box::new(std::fs::File::create(path)?)
-    };
-    let mut csv = ::csv::Writer::from_writer(&mut writer);
+    output_csv::write_custom(path, |csv| write_tree_csv_rows(csv, report))
+}
+
+fn write_tree_csv_rows<W: std::io::Write>(
+    csv: &mut ::csv::Writer<W>,
+    report: &TreeReport,
+) -> Result<()> {
     csv.write_record([
         "pid",
         "parent_pid",
@@ -323,9 +371,8 @@ fn write_tree_csv(path: &std::path::Path, report: &TreeReport) -> Result<()> {
         "cgroup_path",
     ])?;
     for node in &report.nodes {
-        write_tree_csv_node(&mut csv, node, 0)?;
+        write_tree_csv_node(csv, node, 0)?;
     }
-    csv.flush()?;
     Ok(())
 }
 

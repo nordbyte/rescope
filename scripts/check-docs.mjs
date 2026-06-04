@@ -18,9 +18,12 @@ const requiredFiles = [
   "commands/snapshot.md",
   "commands/live.md",
   "commands/record.md",
+  "commands/replay.md",
   "commands/tree.md",
   "commands/watch.md",
   "commands/diff.md",
+  "commands/completions.md",
+  "commands/man.md",
   "commands/help-version.md",
   "reference/options.md",
   "reference/metrics.md",
@@ -30,7 +33,18 @@ const requiredFiles = [
   "internals/development.md",
   "internals/github-pages.md"
 ];
-const commandPages = ["snapshot", "live", "record", "tree", "watch", "diff", "help-version"];
+const commandPages = [
+  "snapshot",
+  "live",
+  "record",
+  "replay",
+  "tree",
+  "watch",
+  "diff",
+  "completions",
+  "man",
+  "help-version"
+];
 
 let failed = false;
 
@@ -56,9 +70,11 @@ for (const option of [
   "--cmd",
   "--cmd-regex",
   "--config",
+  "--config-profile",
   "--exe",
   "--exe-regex",
   "--exit-code",
+  "--for",
   "--jsonl",
   "--name-regex",
   "--no-system",
@@ -67,6 +83,8 @@ for (const option of [
   "--parent-regex",
   "--path",
   "--profile",
+  "--prometheus",
+  "--raw-samples",
   "--min-cpu",
   "--min-ram",
   "--min-io",
