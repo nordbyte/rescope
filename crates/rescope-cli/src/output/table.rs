@@ -58,6 +58,14 @@ pub struct SnapshotRenderOptions {
     pub columns: SnapshotColumns,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RecordingRenderOptions {
+    pub selected_row: Option<usize>,
+    pub row_offset: usize,
+    pub max_rows: Option<usize>,
+    pub compact: bool,
+}
+
 pub fn print_snapshot(report: &SnapshotReport, raw_bytes: bool, show_system: bool, color: bool) {
     print!("{}", render_snapshot(report, raw_bytes, show_system, color));
 }
@@ -280,7 +288,25 @@ fn render_recording_table(
     color: bool,
     compact: bool,
 ) -> String {
+    render_recording_table_with_options(
+        report,
+        raw_bytes,
+        color,
+        RecordingRenderOptions {
+            compact,
+            ..RecordingRenderOptions::default()
+        },
+    )
+}
+
+pub fn render_recording_table_with_options(
+    report: &RecordingReport,
+    raw_bytes: bool,
+    color: bool,
+    options: RecordingRenderOptions,
+) -> String {
     let mut table = plain_table();
+    let row_range = visible_row_range(report.rows.len(), options.row_offset, options.max_rows);
     match report.group_by {
         GroupBy::Process => {
             let mut header = vec!["PID", "USER", "PROCESS"];
@@ -288,7 +314,7 @@ fn render_recording_table(
                 header.push("PATH");
             }
             header.extend(["CPU avg", "CPU max", "CPU p95"]);
-            if !compact {
+            if !options.compact {
                 header.push("CPU p99");
             }
             header.extend([
@@ -305,20 +331,26 @@ fn render_recording_table(
                 "START",
                 "EXIT",
             ]);
-            if !compact {
+            if !options.compact {
                 header.extend(["first", "last"]);
             }
             header.push("STATUS");
+            if options.selected_row.is_some() {
+                header.insert(0, "");
+            }
             table.set_header(header);
-            for row in &report.rows {
-                let mut cells = vec![
+            for (index, row) in report.rows[row_range.clone()].iter().enumerate() {
+                let absolute_index = row_range.start + index;
+                let mut cells = Vec::new();
+                push_selection_cell(&mut cells, options.selected_row, absolute_index, color);
+                cells.extend([
                     cell(row.pid.map(|pid| pid.to_string()).unwrap_or_default()),
                     truncated_cell(
                         row.user_name.as_deref().unwrap_or("unknown"),
                         USER_DISPLAY_MAX_CHARS,
                     ),
                     truncated_cell(&row.display_name, PROCESS_DISPLAY_MAX_CHARS),
-                ];
+                ]);
                 if report.show_path {
                     cells.push(path_cell(row.executable_path.as_deref()));
                 }
@@ -329,7 +361,7 @@ fn render_recording_table(
                     report.cpu_normalized,
                     color,
                 ));
-                if !compact {
+                if !options.compact {
                     cells.push(cpu_percent_cell(
                         row.cpu_p99_percent,
                         report.logical_cpu_count,
@@ -351,7 +383,7 @@ fn render_recording_table(
                     cell(row.started_count.to_string()),
                     cell(row.exited_count.to_string()),
                 ]);
-                if !compact {
+                if !options.compact {
                     cells.extend([
                         cell(humantime::format_rfc3339_seconds(row.first_seen).to_string()),
                         cell(humantime::format_rfc3339_seconds(row.last_seen).to_string()),
@@ -378,15 +410,21 @@ fn render_recording_table(
                 "CPU-s",
                 "RAM p95",
             ];
-            if !compact {
+            if !options.compact {
                 header.extend(["RAM start", "RAM end", "RAM max"]);
             }
             header.extend([
                 "RAM Δ", "READ", "WRITE", "I/O p95", "AVG I/O", "START", "EXIT", "STATUS",
             ]);
+            if options.selected_row.is_some() {
+                header.insert(0, "");
+            }
             table.set_header(header);
-            for row in &report.rows {
-                let mut cells = vec![
+            for (index, row) in report.rows[row_range.clone()].iter().enumerate() {
+                let absolute_index = row_range.start + index;
+                let mut cells = Vec::new();
+                push_selection_cell(&mut cells, options.selected_row, absolute_index, color);
+                cells.extend([
                     group_cell(&row.display_name, report.group_by),
                     cell(row.process_count.to_string()),
                     truncated_cell(
@@ -411,17 +449,27 @@ fn render_recording_table(
                     cell(row.started_count.to_string()),
                     cell(row.exited_count.to_string()),
                     lifecycle_cell(&row.lifecycle_status),
-                ];
-                if !compact {
-                    cells.insert(8, cell(format_bytes(row.ram_start_bytes, raw_bytes)));
-                    cells.insert(9, cell(format_bytes(row.ram_end_bytes, raw_bytes)));
-                    cells.insert(10, cell(format_bytes(row.ram_max_bytes, raw_bytes)));
+                ]);
+                if !options.compact {
+                    let insert_at = if options.selected_row.is_some() { 9 } else { 8 };
+                    cells.insert(
+                        insert_at,
+                        cell(format_bytes(row.ram_start_bytes, raw_bytes)),
+                    );
+                    cells.insert(
+                        insert_at + 1,
+                        cell(format_bytes(row.ram_end_bytes, raw_bytes)),
+                    );
+                    cells.insert(
+                        insert_at + 2,
+                        cell(format_bytes(row.ram_max_bytes, raw_bytes)),
+                    );
                 }
                 table.add_row(cells);
             }
         }
         GroupBy::User => {
-            table.set_header(vec![
+            let mut header = vec![
                 "USER",
                 "PROCS",
                 "CPU avg",
@@ -441,9 +489,16 @@ fn render_recording_table(
                 "EXIT",
                 "TOP",
                 "STATUS",
-            ]);
-            for row in &report.rows {
-                table.add_row(vec![
+            ];
+            if options.selected_row.is_some() {
+                header.insert(0, "");
+            }
+            table.set_header(header);
+            for (index, row) in report.rows[row_range.clone()].iter().enumerate() {
+                let absolute_index = row_range.start + index;
+                let mut cells = Vec::new();
+                push_selection_cell(&mut cells, options.selected_row, absolute_index, color);
+                cells.extend([
                     truncated_cell(&row.display_name, USER_DISPLAY_MAX_CHARS),
                     cell(row.process_count.to_string()),
                     cpu_avg(row, report, color),
@@ -472,6 +527,7 @@ fn render_recording_table(
                     ),
                     lifecycle_cell(&row.lifecycle_status),
                 ]);
+                table.add_row(cells);
             }
         }
     }

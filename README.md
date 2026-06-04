@@ -14,10 +14,10 @@ Use the README for the first install and quick start. Full documentation is avai
 - Per-process read and write counters with safe deltas.
 - Approximate recording percentiles for CPU, RAM and combined I/O plus started/exited process counts.
 - Live views in plain refresh mode or interactive terminal mode.
-- Time-bounded recording reports from the CLI or directly from the interactive TUI.
+- Time-bounded recording reports from the CLI or directly from the interactive TUI, with immediate TUI analysis after recording.
 - Parent-child process trees with subtree CPU, RAM and I/O totals.
 - Alert-style watch mode and JSON report diffs for before/after comparisons.
-- TUI menus for sorting, grouping, filters, column visibility, sampling, recording, exports and frozen/following details.
+- TUI menus for sorting, grouping, filters, column visibility, sampling, recording, recording analysis, exports and frozen/following details.
 - JSON, JSONL, CSV, raw replay and Prometheus exports.
 
 ## Install
@@ -81,7 +81,7 @@ rescope man > rescope.1
 ```
 
 Running `rescope` without a subcommand starts the interactive live TUI when a terminal is available and falls back to plain live output otherwise.
-In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details, `s` for sort, `g` for grouping, `f` for filters, `v` for columns, `r` for recording and `e` for export. In details, `f` toggles frozen versus following the same process or group identity. Menus use up/down plus Enter, so grouping, sorting, filters, view options, sampling and exports can be changed without remembering CLI flags.
+In TUI mode, press `o` for the central options menu, `?` for help, `/` for live search, `Enter` for row details, `s` for sort, `g` for grouping, `f` for filters, `v` for columns, `r` for recording, `a` for the last recording analysis and `e` for export. When a TUI recording finishes, rescope switches from live view into the recording analysis so the captured data can be sorted, grouped, filtered, searched and exported without leaving the TUI. Press `l` to return to live view. In live details, `f` toggles frozen versus following the same process or group identity. Menus use up/down plus Enter, so grouping, sorting, filters, view options, sampling and exports can be changed without remembering CLI flags.
 
 Profiles are available with `--profile cpu|memory|io|commands|users|tree`. A JSON config file can provide defaults:
 

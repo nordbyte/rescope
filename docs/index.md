@@ -8,7 +8,7 @@ Inspect and record resource usage by process and user.
 
 - Takes one-shot snapshots for scripts and CI.
 - Runs a live terminal view with plain refresh or interactive TUI mode.
-- Records a bounded time window and prints an aggregate report.
+- Records a bounded time window and prints an aggregate report, including direct analysis after TUI recordings.
 - Renders process trees with subtree CPU, RAM and I/O totals.
 - Watches for threshold/filter matches and exits with an alert code.
 - Diffs two JSON reports to rank before/after changes.

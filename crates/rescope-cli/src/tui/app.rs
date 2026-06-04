@@ -11,17 +11,17 @@ use crossterm::terminal::{
     enable_raw_mode, size as terminal_size,
 };
 use rescope_core::{
-    CompiledFilter, FilterSpec, GroupBy, RawProcessSample, RecordingAccumulator,
-    RecordingAccumulatorOptions, RecordingReport, RecordingReportOptions, SampleSource,
-    SamplerConfig, SnapshotReport, SnapshotReportOptions, SnapshotRow, SortBy, SysinfoSampler,
-    SystemSample, build_recording_report_from_accumulator, build_snapshot_report,
-    filter_sample_with, format_bps, format_bytes, system_time_ms,
+    AggregateRow, CompiledFilter, FilterSpec, GroupBy, RawProcessSample, RecordingReport,
+    RecordingReportOptions, SampleSource, SamplerConfig, SnapshotReport, SnapshotReportOptions,
+    SnapshotRow, SortBy, SysinfoSampler, SystemSample, build_recording_report,
+    build_snapshot_report, filter_sample_with, format_bps, format_bytes, format_signed_bytes,
+    system_time_ms,
 };
 
 use crate::args::{Cli, LiveArgs};
 use crate::output::{
     csv, json,
-    table::{self, SnapshotColumns, SnapshotRenderOptions},
+    table::{self, RecordingRenderOptions, SnapshotColumns, SnapshotRenderOptions},
 };
 use crate::tui::{labels::group_label, view};
 
@@ -81,12 +81,13 @@ const SAMPLING_ITEMS: [&str; 5] = [
     "Slower refresh",
     "Pause or resume",
 ];
-const RECORDING_ITEMS: [&str; 7] = [
+const RECORDING_ITEMS: [&str; 8] = [
     "Start recording",
     "Stop recording",
     "Longer duration",
     "Shorter duration",
     "Toggle include idle",
+    "Show recording analysis",
     "Export recording JSON",
     "Export recording CSV",
 ];
@@ -127,9 +128,11 @@ const IO_THRESHOLDS: [Option<u64>; 5] = [
     Some(16 * 1024 * 1024),
 ];
 const STATUS_VISIBLE_TICKS: u64 = 4;
-const MAIN_SHORTCUTS: &str = "o options | s sort | g group | f filters | v view | r recording | e export | / search | ? help | q quit";
+const MAIN_SHORTCUTS: &str = "a analysis | o options | s sort | g group | f filters | v view | r recording | e export | / search | ? help | q quit";
+const ANALYSIS_SHORTCUTS: &str = "l live | o options | s sort | g group | f filters | v view | r recording | e export | / search | ? help | q quit";
 const MENU_SHORTCUTS: &str = "up/down choose | Enter apply | Esc back | q quit";
 const DETAIL_SHORTCUTS: &str = "f follow/freeze | Esc close | q quit";
+const RECORDING_DETAIL_SHORTCUTS: &str = "Esc close | q quit";
 const DEFAULT_VIEWPORT: Viewport = Viewport {
     width: 120,
     height: 40,
@@ -138,6 +141,7 @@ const DEFAULT_VIEWPORT: Viewport = Viewport {
 #[derive(Debug)]
 pub struct TuiApp {
     tick_count: u64,
+    mode: TuiMode,
     group_by: GroupBy,
     sort_by: SortBy,
     filter: FilterSpec,
@@ -158,6 +162,8 @@ pub struct TuiApp {
     record_duration: Duration,
     recording_include_idle: bool,
     recording: Option<RecordingSession>,
+    recording_analysis: Option<RecordingAnalysis>,
+    recording_analysis_dirty: bool,
     last_recording_report: Option<RecordingReport>,
 }
 
@@ -197,6 +203,9 @@ enum Overlay {
     Detail {
         row: Box<SnapshotRow>,
         follow: bool,
+    },
+    RecordingDetail {
+        row: Box<AggregateRow>,
     },
     Search {
         input: String,
@@ -245,16 +254,31 @@ struct StatusMessage {
 struct RecordingSession {
     started_at: Instant,
     duration: Duration,
-    accumulator: RecordingAccumulator,
+    interval: Duration,
+    samples: Vec<SystemSample>,
     last_sample_timestamp: Option<std::time::SystemTime>,
     group_by: GroupBy,
     sort_by: SortBy,
     filter: FilterSpec,
+    search_query: String,
     show_command: bool,
     show_path: bool,
     limit: usize,
     include_idle: bool,
     normalize_cpu: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RecordingAnalysis {
+    samples: Vec<SystemSample>,
+    duration: Duration,
+    interval: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TuiMode {
+    Live,
+    RecordingAnalysis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,6 +303,7 @@ impl TuiApp {
     fn new(cli: &Cli, args: &LiveArgs) -> Self {
         Self {
             tick_count: 0,
+            mode: TuiMode::Live,
             group_by: args.effective_group(),
             sort_by: args.effective_sort(),
             filter: args.filters.to_filter_spec(),
@@ -299,6 +324,8 @@ impl TuiApp {
             record_duration: Duration::from_secs(30),
             recording_include_idle: false,
             recording: None,
+            recording_analysis: None,
+            recording_analysis_dirty: false,
             last_recording_report: None,
         }
     }
@@ -321,28 +348,92 @@ impl TuiApp {
             .map(|message| message.text.as_str())
     }
 
+    fn mark_recording_analysis_dirty(&mut self) {
+        if self.recording_analysis.is_some() {
+            self.recording_analysis_dirty = true;
+        }
+    }
+
+    fn refresh_recording_analysis(&mut self) {
+        if !self.recording_analysis_dirty && self.last_recording_report.is_some() {
+            return;
+        }
+        let Some(analysis) = &self.recording_analysis else {
+            return;
+        };
+
+        let filter = self.filter.clone();
+        let samples = analysis
+            .samples
+            .iter()
+            .map(|sample| apply_tui_filters_with(sample, &filter, &self.search_query))
+            .collect::<Vec<_>>();
+        let report = build_recording_report(
+            &samples,
+            RecordingReportOptions {
+                requested_duration: analysis.duration,
+                interval: analysis.interval,
+                group_by: self.group_by,
+                sort_by: self.sort_by,
+                filters: filter,
+                show_command: self.show_command,
+                show_path: self.show_path,
+                limit: self.limit,
+                include_idle: self.recording_include_idle,
+                normalize_cpu: self.normalize_cpu,
+            },
+        );
+        self.selected_row = clamp_selected_row(self.selected_row, report.rows.len());
+        if let Overlay::RecordingDetail { row } = &mut self.overlay
+            && let Some(updated) = report
+                .rows
+                .iter()
+                .find(|candidate| candidate.key == row.key)
+                .cloned()
+        {
+            **row = updated;
+        }
+        self.last_recording_report = Some(report);
+        self.recording_analysis_dirty = false;
+    }
+
+    fn show_recording_analysis(&mut self) {
+        if self.recording_analysis.is_none() && self.last_recording_report.is_none() {
+            self.set_status("no recording analysis yet");
+            self.close_overlay();
+            return;
+        }
+        self.mode = TuiMode::RecordingAnalysis;
+        self.paused = true;
+        self.refresh_recording_analysis();
+        self.selected_row = clamp_selected_row(self.selected_row, self.selected_row_count());
+        self.close_overlay();
+        self.set_status("recording analysis");
+    }
+
+    fn show_live(&mut self) {
+        self.mode = TuiMode::Live;
+        self.paused = false;
+        self.close_overlay();
+        self.set_status("live view");
+    }
+
     fn sampler_config(&self) -> SamplerConfig {
-        let recording_needs_command = self.recording.as_ref().is_some_and(|recording| {
-            recording.show_command || recording.group_by == GroupBy::Command
-        });
-        let recording_needs_executable = self
-            .recording
-            .as_ref()
-            .is_some_and(|recording| recording.group_by == GroupBy::Executable);
+        let recording_active = self.recording.is_some();
         SamplerConfig {
             include_command: self.show_command
                 || self.group_by == GroupBy::Command
                 || !self.filter.command_substrings.is_empty()
                 || !self.filter.command_regexes.is_empty()
                 || !self.search_query.is_empty()
-                || recording_needs_command,
+                || recording_active,
             include_executable: self.group_by == GroupBy::Executable
                 || self.show_path
                 || !self.filter.executable_substrings.is_empty()
                 || !self.filter.executable_regexes.is_empty()
                 || !self.filter.process_substrings.is_empty()
                 || !self.search_query.is_empty()
-                || recording_needs_executable,
+                || recording_active,
         }
     }
 
@@ -372,6 +463,9 @@ impl TuiApp {
     }
 
     fn open_export_path(&mut self, target: ExportTarget, format: ExportFormat) {
+        if target == ExportTarget::Recording {
+            self.refresh_recording_analysis();
+        }
         if target == ExportTarget::Recording && self.last_recording_report.is_none() {
             self.set_status("no recording report to export yet");
             self.close_overlay();
@@ -385,19 +479,36 @@ impl TuiApp {
     }
 
     fn open_detail(&mut self) {
-        let Some(row) = self
-            .last_report
-            .as_ref()
-            .and_then(|report| report.rows.get(self.selected_row))
-            .cloned()
-        else {
-            self.set_status("no selected row");
-            return;
-        };
-        self.overlay = Overlay::Detail {
-            row: Box::new(row),
-            follow: false,
-        };
+        match self.mode {
+            TuiMode::Live => {
+                let Some(row) = self
+                    .last_report
+                    .as_ref()
+                    .and_then(|report| report.rows.get(self.selected_row))
+                    .cloned()
+                else {
+                    self.set_status("no selected row");
+                    return;
+                };
+                self.overlay = Overlay::Detail {
+                    row: Box::new(row),
+                    follow: false,
+                };
+            }
+            TuiMode::RecordingAnalysis => {
+                self.refresh_recording_analysis();
+                let Some(row) = self
+                    .last_recording_report
+                    .as_ref()
+                    .and_then(|report| report.rows.get(self.selected_row))
+                    .cloned()
+                else {
+                    self.set_status("no selected row");
+                    return;
+                };
+                self.overlay = Overlay::RecordingDetail { row: Box::new(row) };
+            }
+        }
     }
 
     fn close_overlay(&mut self) {
@@ -419,10 +530,18 @@ impl TuiApp {
     }
 
     fn selected_row_count(&self) -> usize {
-        self.last_report
-            .as_ref()
-            .map(|report| report.rows.len())
-            .unwrap_or(0)
+        match self.mode {
+            TuiMode::Live => self
+                .last_report
+                .as_ref()
+                .map(|report| report.rows.len())
+                .unwrap_or(0),
+            TuiMode::RecordingAnalysis => self
+                .last_recording_report
+                .as_ref()
+                .map(|report| report.rows.len())
+                .unwrap_or(0),
+        }
     }
 
     fn move_selected_row(&mut self, direction: PickerDirection) {
@@ -461,15 +580,18 @@ impl TuiApp {
             return;
         }
         self.limit = self.limit.saturating_add(5).min(500);
+        self.mark_recording_analysis_dirty();
     }
 
     fn decrease_limit(&mut self) {
         if self.limit == usize::MAX {
             self.limit = 100;
+            self.mark_recording_analysis_dirty();
             return;
         }
         self.limit = self.limit.saturating_sub(5).max(1);
         self.selected_row = clamp_selected_row(self.selected_row, self.limit);
+        self.mark_recording_analysis_dirty();
     }
 
     fn faster_interval(&mut self) {
@@ -489,6 +611,7 @@ impl TuiApp {
 
     fn toggle_normalized_cpu(&mut self) {
         self.normalize_cpu = !self.normalize_cpu;
+        self.mark_recording_analysis_dirty();
         self.set_status(format!("normalized CPU {}", on_off(self.normalize_cpu)));
     }
 
@@ -499,16 +622,19 @@ impl TuiApp {
 
     fn toggle_show_command(&mut self) {
         self.show_command = !self.show_command;
+        self.mark_recording_analysis_dirty();
         self.set_status(format!("command display {}", on_off(self.show_command)));
     }
 
     fn toggle_show_path(&mut self) {
         self.show_path = !self.show_path;
+        self.mark_recording_analysis_dirty();
         self.set_status(format!("path display {}", on_off(self.show_path)));
     }
 
     fn toggle_recording_include_idle(&mut self) {
         self.recording_include_idle = !self.recording_include_idle;
+        self.mark_recording_analysis_dirty();
         self.set_status(format!(
             "recording include idle {}",
             on_off(self.recording_include_idle)
@@ -528,21 +654,29 @@ impl TuiApp {
     fn cycle_min_cpu(&mut self) {
         self.filter.min_cpu_percent =
             next_option_value(self.filter.min_cpu_percent, &CPU_THRESHOLDS);
+        self.selected_row = 0;
+        self.mark_recording_analysis_dirty();
     }
 
     fn cycle_min_ram(&mut self) {
         self.filter.min_ram_bytes = next_option_value(self.filter.min_ram_bytes, &RAM_THRESHOLDS);
+        self.selected_row = 0;
+        self.mark_recording_analysis_dirty();
     }
 
     fn cycle_min_io(&mut self) {
         self.filter.min_io_delta_bytes =
             next_option_value(self.filter.min_io_delta_bytes, &IO_THRESHOLDS);
+        self.selected_row = 0;
+        self.mark_recording_analysis_dirty();
     }
 
     fn clear_thresholds(&mut self) {
         self.filter.min_cpu_percent = None;
         self.filter.min_ram_bytes = None;
         self.filter.min_io_delta_bytes = None;
+        self.selected_row = 0;
+        self.mark_recording_analysis_dirty();
     }
 
     fn clear_text_filters(&mut self) {
@@ -553,6 +687,7 @@ impl TuiApp {
         self.filter.executable_substrings.clear();
         self.filter.parent_names.clear();
         self.selected_row = 0;
+        self.mark_recording_analysis_dirty();
     }
 
     fn start_recording(&mut self) {
@@ -563,24 +698,24 @@ impl TuiApp {
         self.recording = Some(RecordingSession {
             started_at: Instant::now(),
             duration: self.record_duration,
+            interval: self.interval,
+            samples: Vec::new(),
+            last_sample_timestamp: None,
             group_by: self.group_by,
             sort_by: self.sort_by,
             filter: self.filter.clone(),
+            search_query: self.search_query.clone(),
             show_command: self.show_command,
             show_path: self.show_path,
             limit: self.limit,
             include_idle: self.recording_include_idle,
             normalize_cpu: self.normalize_cpu,
-            accumulator: RecordingAccumulator::new(RecordingAccumulatorOptions {
-                group_by: self.group_by,
-                sort_by: self.sort_by,
-                interval: self.interval,
-                show_command: self.show_command,
-                show_path: self.show_path,
-                include_idle: self.recording_include_idle,
-            }),
-            last_sample_timestamp: None,
         });
+        self.mode = TuiMode::Live;
+        self.paused = false;
+        self.recording_analysis = None;
+        self.recording_analysis_dirty = false;
+        self.last_recording_report = None;
         self.set_status(format!(
             "recording started for {}",
             humantime::format_duration(self.record_duration)
@@ -601,7 +736,7 @@ impl TuiApp {
         };
         let is_duplicate = recording.last_sample_timestamp == Some(sample.timestamp);
         if !is_duplicate {
-            recording.accumulator.push_sample(sample);
+            recording.samples.push(sample.clone());
             recording.last_sample_timestamp = Some(sample.timestamp);
         }
         if recording.started_at.elapsed() >= recording.duration
@@ -612,37 +747,33 @@ impl TuiApp {
     }
 
     fn finish_recording(&mut self, recording: RecordingSession) {
-        if recording.accumulator.is_empty() {
+        if recording.samples.is_empty() {
             self.set_status("recording stopped without samples");
             return;
         }
 
-        let elapsed = recording.started_at.elapsed().max(self.interval);
-        let group_by = recording.group_by;
-        let sort_by = recording.sort_by;
-        let filter = recording.filter;
-        let show_command = recording.show_command;
-        let show_path = recording.show_path;
-        let limit = recording.limit;
-        let include_idle = recording.include_idle;
-        let normalize_cpu = recording.normalize_cpu;
-        let report = build_recording_report_from_accumulator(
-            recording.accumulator,
-            RecordingReportOptions {
-                requested_duration: elapsed,
-                interval: self.interval,
-                group_by,
-                sort_by,
-                filters: filter,
-                show_command,
-                show_path,
-                limit,
-                include_idle,
-                normalize_cpu,
-            },
-        );
-        let sample_count = report.sample_count;
-        self.last_recording_report = Some(report);
+        let sample_count = recording.samples.len();
+        let elapsed = recording.started_at.elapsed().max(recording.interval);
+        self.group_by = recording.group_by;
+        self.sort_by = recording.sort_by;
+        self.filter = recording.filter;
+        self.search_query = recording.search_query;
+        self.show_command = recording.show_command;
+        self.show_path = recording.show_path;
+        self.limit = recording.limit;
+        self.recording_include_idle = recording.include_idle;
+        self.normalize_cpu = recording.normalize_cpu;
+        self.selected_row = 0;
+        self.mode = TuiMode::RecordingAnalysis;
+        self.paused = true;
+        self.overlay = Overlay::None;
+        self.recording_analysis = Some(RecordingAnalysis {
+            samples: recording.samples,
+            duration: elapsed,
+            interval: recording.interval,
+        });
+        self.recording_analysis_dirty = true;
+        self.refresh_recording_analysis();
         self.set_status(format!("recording finished with {sample_count} samples"));
     }
 
@@ -657,6 +788,9 @@ impl TuiApp {
         if export.path.exists() {
             self.set_status(format!("export exists: {}", export.path.display()));
             return;
+        }
+        if export.target == ExportTarget::Recording {
+            self.refresh_recording_analysis();
         }
 
         let result = match (export.target, export.format) {
@@ -714,29 +848,35 @@ pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
             app.set_status("sampler details updated");
         }
 
-        if !app.paused || cached_sample.is_none() {
-            cached_sample = Some(sampler.sample()?);
+        let needs_live_sample = app.mode == TuiMode::Live || app.recording.is_some();
+        if needs_live_sample {
+            if app.recording.is_some() || !app.paused || cached_sample.is_none() {
+                cached_sample = Some(sampler.sample()?);
+            }
+            let sample = cached_sample
+                .as_ref()
+                .expect("cached sample is populated before rendering");
+            let filtered = apply_tui_filters(sample, &app);
+            let report = build_snapshot_report(
+                &filtered,
+                SnapshotReportOptions {
+                    interval: app.interval,
+                    group_by: app.group_by,
+                    sort_by: app.sort_by,
+                    filters: app.filter.clone(),
+                    show_command: app.show_command,
+                    show_path: app.show_path,
+                    limit: app.limit,
+                    normalize_cpu: app.normalize_cpu,
+                },
+            );
+            app.tick_count += 1;
+            app.set_report(report);
+            app.capture_recording_sample(sample);
+        } else {
+            app.tick_count += 1;
         }
-        let sample = cached_sample
-            .as_ref()
-            .expect("cached sample is populated before rendering");
-        let filtered = apply_tui_filters(sample, &app);
-        let report = build_snapshot_report(
-            &filtered,
-            SnapshotReportOptions {
-                interval: app.interval,
-                group_by: app.group_by,
-                sort_by: app.sort_by,
-                filters: app.filter.clone(),
-                show_command: app.show_command,
-                show_path: app.show_path,
-                limit: app.limit,
-                normalize_cpu: app.normalize_cpu,
-            },
-        );
-        app.capture_recording_sample(&filtered);
-        app.tick_count += 1;
-        app.set_report(report.clone());
+        app.refresh_recording_analysis();
         app.perform_pending_export();
 
         execute!(
@@ -744,12 +884,18 @@ pub fn run_live(cli: &Cli, args: &LiveArgs) -> Result<()> {
             Clear(ClearType::All),
             crossterm::cursor::MoveTo(0, 0)
         )?;
-        write_tui_text(&render_app(
-            &app,
-            &report,
-            cli.color_enabled(),
-            current_viewport(),
-        ))?;
+        let viewport = current_viewport();
+        let rendered = match app.mode {
+            TuiMode::Live => app
+                .last_report
+                .as_ref()
+                .map(|report| render_app(&app, report, cli.color_enabled(), viewport))
+                .unwrap_or_else(|| render_empty_live_app(&app, cli.color_enabled(), viewport)),
+            TuiMode::RecordingAnalysis => {
+                render_recording_analysis_app(&app, cli.color_enabled(), viewport)
+            }
+        };
+        write_tui_text(&rendered)?;
         io::stdout().flush()?;
 
         let next_tick = Instant::now() + app.interval;
@@ -821,6 +967,7 @@ fn handle_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> TuiIn
         } => handle_export_path_key(app, code, modifiers, target, format, input),
         Overlay::Help => handle_simple_overlay_key(app, code),
         Overlay::Detail { .. } => handle_detail_overlay_key(app, code),
+        Overlay::RecordingDetail { .. } => handle_simple_overlay_key(app, code),
         Overlay::Options { .. }
         | Overlay::Sort { .. }
         | Overlay::Group { .. }
@@ -842,6 +989,8 @@ fn handle_main_key(app: &mut TuiApp, code: KeyCode, modifiers: KeyModifiers) -> 
 
     match code {
         KeyCode::Char('?') => app.overlay = Overlay::Help,
+        KeyCode::Char('a') | KeyCode::Char('A') => app.show_recording_analysis(),
+        KeyCode::Char('l') | KeyCode::Char('L') => app.show_live(),
         KeyCode::Char('o') | KeyCode::Char('O') => app.overlay = Overlay::Options { selected: 0 },
         KeyCode::Char('s') => app.open_sort_picker(),
         KeyCode::Char('g') | KeyCode::Char('G') => app.open_group_picker(),
@@ -925,6 +1074,7 @@ fn handle_search_key(
         KeyCode::Enter => {
             app.search_query = input.trim().to_string();
             app.selected_row = 0;
+            app.mark_recording_analysis_dirty();
             app.close_overlay();
         }
         KeyCode::Backspace => {
@@ -954,6 +1104,7 @@ fn handle_filter_text_key(
         KeyCode::Enter => {
             set_filter_text(&mut app.filter, field, input.trim());
             app.selected_row = 0;
+            app.mark_recording_analysis_dirty();
             app.close_overlay();
         }
         KeyCode::Backspace => {
@@ -1040,6 +1191,7 @@ fn move_overlay_selection(app: &mut TuiApp, direction: PickerDirection) {
         Overlay::None
         | Overlay::Help
         | Overlay::Detail { .. }
+        | Overlay::RecordingDetail { .. }
         | Overlay::Search { .. }
         | Overlay::FilterText { .. }
         | Overlay::ExportPath { .. } => {}
@@ -1062,11 +1214,13 @@ fn apply_overlay_selection(app: &mut TuiApp) {
         },
         Overlay::Sort { selected } => {
             app.sort_by = view::SORT_OPTIONS[selected];
+            app.mark_recording_analysis_dirty();
             app.close_overlay();
         }
         Overlay::Group { selected } => {
             app.group_by = GROUP_OPTIONS[selected];
             app.selected_row = 0;
+            app.mark_recording_analysis_dirty();
             app.close_overlay();
         }
         Overlay::Filter { selected } => match selected {
@@ -1077,8 +1231,16 @@ fn apply_overlay_selection(app: &mut TuiApp) {
             4 => app.open_filter_text(FilterField::Executable),
             5 => app.open_filter_text(FilterField::Parent),
             6 => app.clear_text_filters(),
-            7 => app.filter.invert_match = !app.filter.invert_match,
-            8 => app.filter.hide_self = !app.filter.hide_self,
+            7 => {
+                app.filter.invert_match = !app.filter.invert_match;
+                app.selected_row = 0;
+                app.mark_recording_analysis_dirty();
+            }
+            8 => {
+                app.filter.hide_self = !app.filter.hide_self;
+                app.selected_row = 0;
+                app.mark_recording_analysis_dirty();
+            }
             9 => app.cycle_min_cpu(),
             10 => app.cycle_min_ram(),
             11 => app.cycle_min_io(),
@@ -1114,8 +1276,9 @@ fn apply_overlay_selection(app: &mut TuiApp) {
             2 => app.longer_record_duration(),
             3 => app.shorter_record_duration(),
             4 => app.toggle_recording_include_idle(),
-            5 => app.open_export_path(ExportTarget::Recording, ExportFormat::Json),
-            6 => app.open_export_path(ExportTarget::Recording, ExportFormat::Csv),
+            5 => app.show_recording_analysis(),
+            6 => app.open_export_path(ExportTarget::Recording, ExportFormat::Json),
+            7 => app.open_export_path(ExportTarget::Recording, ExportFormat::Csv),
             _ => {}
         },
         Overlay::Export { selected } => match selected {
@@ -1128,6 +1291,7 @@ fn apply_overlay_selection(app: &mut TuiApp) {
         Overlay::None
         | Overlay::Help
         | Overlay::Detail { .. }
+        | Overlay::RecordingDetail { .. }
         | Overlay::Search { .. }
         | Overlay::FilterText { .. }
         | Overlay::ExportPath { .. } => {}
@@ -1176,6 +1340,164 @@ fn render_app(app: &TuiApp, report: &SnapshotReport, color: bool, viewport: View
     output.push_str(&overlay);
     output.push_str(&footer);
     fit_to_viewport(output, viewport)
+}
+
+fn render_empty_live_app(app: &TuiApp, color: bool, viewport: Viewport) -> String {
+    let mut output = String::new();
+    output.push_str(&paint("rescope live\n", TuiStyle::Header, color));
+    output.push_str("waiting for first sample\n");
+    if let Some(message) = app.status_text() {
+        writeln!(
+            &mut output,
+            "{} {}",
+            label("status", color),
+            paint(message, status_message_style(message), color)
+        )
+        .expect("writing to a string cannot fail");
+    }
+    output.push_str(&format_overlay(app, color));
+    output.push_str(&format_footer(app, color));
+    fit_to_viewport(output, viewport)
+}
+
+fn render_recording_analysis_app(app: &TuiApp, color: bool, viewport: Viewport) -> String {
+    let mut output = String::new();
+    let overlay = format_overlay(app, color);
+    let footer = format_footer(app, color);
+    let Some(report) = &app.last_recording_report else {
+        output.push_str(&paint(
+            "rescope recording analysis\n",
+            TuiStyle::Header,
+            color,
+        ));
+        output.push_str("no recording analysis available\n");
+        output.push_str(&overlay);
+        output.push_str(&footer);
+        return fit_to_viewport(output, viewport);
+    };
+
+    let max_rows = recording_table_max_rows(app, report, &overlay, &footer, viewport);
+    let row_offset = row_offset_for_selection(app.selected_row, report.rows.len(), max_rows);
+
+    output.push_str(&paint(
+        &format_recording_analysis_header(report, app.tick_count),
+        TuiStyle::Header,
+        color,
+    ));
+    output.push_str(&format_recording_analysis_state_line(app, report, color));
+    if report.rows.is_empty() {
+        output.push_str("no matching processes\n");
+    } else {
+        output.push_str(&table::render_recording_table_with_options(
+            report,
+            app.raw_bytes,
+            color,
+            RecordingRenderOptions {
+                selected_row: Some(app.selected_row),
+                row_offset,
+                max_rows: Some(max_rows),
+                compact: viewport.width < 140,
+            },
+        ));
+    }
+    output.push_str(&overlay);
+    output.push_str(&footer);
+    fit_to_viewport(output, viewport)
+}
+
+fn format_recording_analysis_header(report: &RecordingReport, tick_count: u64) -> String {
+    format!(
+        "rescope recording analysis | duration {} | interval {} | samples {} | tick {tick_count}\n",
+        humantime::format_duration(report.duration),
+        humantime::format_duration(report.interval),
+        report.sample_count
+    )
+}
+
+fn format_recording_analysis_state_line(
+    app: &TuiApp,
+    report: &RecordingReport,
+    color: bool,
+) -> String {
+    let mut output = String::new();
+    let search = if app.search_query.is_empty() {
+        "none"
+    } else {
+        app.search_query.as_str()
+    };
+    let selected = if report.rows.is_empty() {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", app.selected_row + 1, report.rows.len())
+    };
+    let recording = app
+        .recording
+        .as_ref()
+        .map(|recording| {
+            paint(
+                &format!(
+                    "recording {}/{}",
+                    humantime::format_duration(recording.started_at.elapsed()),
+                    humantime::format_duration(recording.duration)
+                ),
+                TuiStyle::Accent,
+                color,
+            )
+        })
+        .unwrap_or_else(|| paint("recording off", TuiStyle::Muted, color));
+    writeln!(
+        &mut output,
+        "{} {} | {} {} | {} {} | {} {} | {} {selected} | {} {search} | {recording}",
+        label("mode", color),
+        paint("analysis", TuiStyle::Accent, color),
+        label("group", color),
+        group_label(app.group_by),
+        label("sort", color),
+        view::sort_label(app.sort_by),
+        label("limit", color),
+        limit_label(app.limit),
+        label("row", color),
+        label("search", color),
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} {} | {} {} | {} {} | {} {} | {} in {} out {}",
+        label("normalized", color),
+        on_off(app.normalize_cpu),
+        label("bytes", color),
+        on_off(app.raw_bytes),
+        label("command", color),
+        on_off(app.show_command),
+        label("path", color),
+        on_off(app.show_path),
+        label("network", color),
+        format_bytes(report.network_received_delta_bytes, app.raw_bytes),
+        format_bytes(report.network_transmitted_delta_bytes, app.raw_bytes),
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} {} | {} {} | {} {}",
+        label("filters", color),
+        filter_summary(app),
+        label("started", color),
+        humantime::format_rfc3339_seconds(report.started_at),
+        label("ended", color),
+        humantime::format_rfc3339_seconds(report.ended_at),
+    )
+    .expect("writing to a string cannot fail");
+    if let Some(message) = app.status_text() {
+        writeln!(
+            &mut output,
+            "{} {}",
+            label("status", color),
+            paint(message, status_message_style(message), color)
+        )
+        .expect("writing to a string cannot fail");
+    }
+    output.push('\n');
+    output
 }
 
 fn format_state_line(app: &TuiApp, report: &SnapshotReport, color: bool) -> String {
@@ -1273,6 +1595,7 @@ fn format_overlay(app: &TuiApp, color: bool) -> String {
             input,
         } => format_export_path(*target, *format, input, color),
         Overlay::Detail { row, follow } => format_detail(app, row, *follow, color),
+        Overlay::RecordingDetail { row } => format_recording_detail(app, row, color),
         Overlay::Search { input } => format!(
             "{}\n{} {input}\n\nEnter apply | Esc cancel\n\n",
             section_title("Search", color),
@@ -1432,6 +1755,11 @@ fn format_recording_menu(selected: usize, app: &TuiApp, color: bool) -> String {
         } else {
             "none".to_string()
         },
+        if app.last_recording_report.is_some() {
+            "ready".to_string()
+        } else {
+            "none".to_string()
+        },
     ];
     format_menu(
         "Recording",
@@ -1478,7 +1806,8 @@ fn format_export_path(
 fn format_help(color: bool) -> String {
     let lines = [
         section_title("Help", color),
-        MAIN_SHORTCUTS.to_string(),
+        format!("live: {MAIN_SHORTCUTS}"),
+        format!("analysis: {ANALYSIS_SHORTCUTS}"),
         "up/down select row | PgUp/PgDn page | Enter details".to_string(),
         "details: f toggle frozen/follow mode".to_string(),
         "space pause/resume | +/- row limit | [/] refresh interval".to_string(),
@@ -1579,11 +1908,112 @@ fn format_detail(app: &TuiApp, row: &SnapshotRow, follow: bool, color: bool) -> 
     output
 }
 
+fn format_recording_detail(app: &TuiApp, row: &AggregateRow, color: bool) -> String {
+    let mut output = String::new();
+    writeln!(&mut output, "{}", section_title("Recording Details", color))
+        .expect("writing to a string cannot fail");
+    writeln!(&mut output, "{} {}", label("name", color), row.display_name)
+        .expect("writing to a string cannot fail");
+    if let Some(pid) = row.pid {
+        writeln!(&mut output, "{} {pid}", label("pid", color))
+            .expect("writing to a string cannot fail");
+    }
+    if let Some(path) = row.executable_path.as_deref() {
+        writeln!(&mut output, "{} {path}", label("path", color))
+            .expect("writing to a string cannot fail");
+    }
+    writeln!(
+        &mut output,
+        "{} {} | {} {} | {} {}",
+        label("group", color),
+        group_label(row.group_type),
+        label("processes", color),
+        row.process_count,
+        label("users", color),
+        row.users
+            .as_deref()
+            .or(row.user_name.as_deref())
+            .unwrap_or("unknown")
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} avg {:.1}% max {:.1}% p95 {:.1}% p99 {:.1}% | {} {:.1}",
+        label("cpu", color),
+        row.cpu_avg_percent,
+        row.cpu_max_percent,
+        row.cpu_p95_percent,
+        row.cpu_p99_percent,
+        label("core-seconds", color),
+        row.cpu_core_seconds
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} start {} end {} min {} max {} p95 {} avg {} delta {}",
+        label("ram", color),
+        format_bytes(row.ram_start_bytes, app.raw_bytes),
+        format_bytes(row.ram_end_bytes, app.raw_bytes),
+        format_bytes(row.ram_min_bytes, app.raw_bytes),
+        format_bytes(row.ram_max_bytes, app.raw_bytes),
+        format_bytes(row.ram_p95_bytes, app.raw_bytes),
+        format_bytes(row.ram_avg_bytes, app.raw_bytes),
+        format_signed_bytes(row.ram_delta_bytes, app.raw_bytes)
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} read {} write {} total {} p95 {} avg {}",
+        label("io", color),
+        format_bytes(row.disk_read_total_bytes, app.raw_bytes),
+        format_bytes(row.disk_write_total_bytes, app.raw_bytes),
+        format_bytes(row.disk_io_total_bytes, app.raw_bytes),
+        format_bytes(row.io_p95_bytes, app.raw_bytes),
+        format_bps(row.io_bytes_per_second_avg, app.raw_bytes)
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} {} | {} {} | {} {}",
+        label("lifecycle", color),
+        row.lifecycle_status,
+        label("started", color),
+        row.started_count,
+        label("exited", color),
+        row.exited_count
+    )
+    .expect("writing to a string cannot fail");
+    writeln!(
+        &mut output,
+        "{} {} | {} {}",
+        label("first seen", color),
+        humantime::format_rfc3339_seconds(row.first_seen),
+        label("last seen", color),
+        humantime::format_rfc3339_seconds(row.last_seen)
+    )
+    .expect("writing to a string cannot fail");
+    if let Some(process) = &row.top_process {
+        writeln!(&mut output, "{} {process}", label("top process", color))
+            .expect("writing to a string cannot fail");
+    }
+    writeln!(
+        &mut output,
+        "\n{}\n",
+        paint(RECORDING_DETAIL_SHORTCUTS, TuiStyle::Muted, color)
+    )
+    .expect("writing to a string cannot fail");
+    output
+}
+
 fn format_footer(app: &TuiApp, color: bool) -> String {
     if app.overlay_open() {
         format!("\n{}\n", paint(MENU_SHORTCUTS, TuiStyle::Muted, color))
     } else {
-        format!("\n{}\n", paint(MAIN_SHORTCUTS, TuiStyle::Muted, color))
+        let shortcuts = match app.mode {
+            TuiMode::Live => MAIN_SHORTCUTS,
+            TuiMode::RecordingAnalysis => ANALYSIS_SHORTCUTS,
+        };
+        format!("\n{}\n", paint(shortcuts, TuiStyle::Muted, color))
     }
 }
 
@@ -1608,9 +2038,17 @@ fn fit_to_viewport(output: String, viewport: Viewport) -> String {
 }
 
 fn apply_tui_filters(sample: &SystemSample, app: &TuiApp) -> SystemSample {
-    let matcher = CompiledFilter::new(&app.filter);
+    apply_tui_filters_with(sample, &app.filter, &app.search_query)
+}
+
+fn apply_tui_filters_with(
+    sample: &SystemSample,
+    filter: &FilterSpec,
+    search_query: &str,
+) -> SystemSample {
+    let matcher = CompiledFilter::new(filter);
     let mut filtered = filter_sample_with(sample, &matcher);
-    let query = app.search_query.trim().to_ascii_lowercase();
+    let query = search_query.trim().to_ascii_lowercase();
     if query.is_empty() {
         return filtered;
     }
@@ -1658,6 +2096,23 @@ fn table_max_rows(app: &TuiApp, overlay: &str, footer: &str, viewport: Viewport)
         .as_ref()
         .map(|report| format_state_line(app, report, false))
         .unwrap_or_default();
+    let reserved_lines =
+        line_count(&header) + line_count(&state) + line_count(overlay) + line_count(footer) + 2;
+    (viewport.height as usize)
+        .saturating_sub(reserved_lines)
+        .saturating_sub(1)
+        .max(3)
+}
+
+fn recording_table_max_rows(
+    app: &TuiApp,
+    report: &RecordingReport,
+    overlay: &str,
+    footer: &str,
+    viewport: Viewport,
+) -> usize {
+    let header = format_recording_analysis_header(report, app.tick_count);
+    let state = format_recording_analysis_state_line(app, report, false);
     let reserved_lines =
         line_count(&header) + line_count(&state) + line_count(overlay) + line_count(footer) + 2;
     (viewport.height as usize)
@@ -1976,6 +2431,7 @@ mod tests {
     fn app() -> TuiApp {
         TuiApp {
             tick_count: 0,
+            mode: TuiMode::Live,
             group_by: GroupBy::Process,
             sort_by: SortBy::Cpu,
             filter: FilterSpec::default(),
@@ -1996,6 +2452,8 @@ mod tests {
             record_duration: Duration::from_secs(30),
             recording_include_idle: false,
             recording: None,
+            recording_analysis: None,
+            recording_analysis_dirty: false,
             last_recording_report: None,
         }
     }
@@ -2193,6 +2651,71 @@ mod tests {
     }
 
     #[test]
+    fn stopped_recording_switches_to_analysis_view() {
+        let mut app = app();
+        app.start_recording();
+        app.capture_recording_sample(&sample_with_processes(&["alpha", "beta"]));
+        app.stop_recording();
+
+        assert_eq!(app.mode, TuiMode::RecordingAnalysis);
+        assert!(app.paused);
+        assert!(app.recording_analysis.is_some());
+        let report = app
+            .last_recording_report
+            .as_ref()
+            .expect("recording report");
+        assert_eq!(report.sample_count, 1);
+        assert_eq!(report.rows.len(), 2);
+    }
+
+    #[test]
+    fn recording_analysis_rebuilds_with_current_filters_and_grouping() {
+        let mut app = app();
+        app.recording_analysis = Some(RecordingAnalysis {
+            samples: vec![sample_with_processes(&["alpha", "beta"])],
+            duration: Duration::from_secs(1),
+            interval: Duration::from_secs(1),
+        });
+        app.mode = TuiMode::RecordingAnalysis;
+        app.recording_analysis_dirty = true;
+        app.refresh_recording_analysis();
+
+        assert_eq!(app.last_recording_report.as_ref().unwrap().rows.len(), 2);
+
+        app.search_query = "alpha".to_string();
+        app.group_by = GroupBy::Name;
+        app.selected_row = 0;
+        app.mark_recording_analysis_dirty();
+        app.refresh_recording_analysis();
+
+        let report = app.last_recording_report.as_ref().unwrap();
+        assert_eq!(report.group_by, GroupBy::Name);
+        assert_eq!(report.rows.len(), 1);
+        assert_eq!(report.rows[0].display_name, "alpha");
+    }
+
+    #[test]
+    fn render_recording_analysis_lists_shortcuts_and_rows() {
+        let mut app = app();
+        app.recording_analysis = Some(RecordingAnalysis {
+            samples: vec![sample_with_processes(&["alpha"])],
+            duration: Duration::from_secs(1),
+            interval: Duration::from_secs(1),
+        });
+        app.mode = TuiMode::RecordingAnalysis;
+        app.recording_analysis_dirty = true;
+        app.refresh_recording_analysis();
+
+        let rendered = render_recording_analysis_app(&app, false, DEFAULT_VIEWPORT);
+
+        assert!(rendered.contains("recording analysis"));
+        assert!(rendered.contains("alpha"));
+        assert!(rendered.contains("l live"));
+        assert!(rendered.contains("g group"));
+        assert!(rendered.contains("f filters"));
+    }
+
+    #[test]
     fn row_offset_keeps_selected_row_visible() {
         assert_eq!(row_offset_for_selection(0, 20, 5), 0);
         assert_eq!(row_offset_for_selection(9, 20, 5), 5);
@@ -2258,10 +2781,11 @@ mod tests {
 
     #[test]
     fn footer_lists_all_direct_option_shortcuts() {
-        let app = app();
-        let footer = format_footer(&app, false);
+        let app_live = app();
+        let footer = format_footer(&app_live, false);
 
         for shortcut in [
+            "a analysis",
             "o options",
             "s sort",
             "g group",
@@ -2274,6 +2798,14 @@ mod tests {
         ] {
             assert!(footer.contains(shortcut), "{shortcut}");
         }
+
+        let mut app = app();
+        app.mode = TuiMode::RecordingAnalysis;
+        let footer = format_footer(&app, false);
+        assert!(footer.contains("l live"));
+        assert!(footer.contains("s sort"));
+        assert!(footer.contains("g group"));
+        assert!(footer.contains("f filters"));
     }
 
     #[test]
@@ -2301,7 +2833,25 @@ mod tests {
     }
 
     fn report_with_processes(names: &[&str]) -> SnapshotReport {
-        let sample = SystemSample {
+        let sample = sample_with_processes(names);
+
+        build_snapshot_report(
+            &sample,
+            SnapshotReportOptions {
+                interval: Duration::from_secs(1),
+                group_by: GroupBy::Process,
+                sort_by: SortBy::Name,
+                filters: FilterSpec::default(),
+                show_command: false,
+                show_path: false,
+                limit: 20,
+                normalize_cpu: false,
+            },
+        )
+    }
+
+    fn sample_with_processes(names: &[&str]) -> SystemSample {
+        SystemSample {
             timestamp: std::time::SystemTime::UNIX_EPOCH,
             total_memory_bytes: 1024,
             available_memory_bytes: 512,
@@ -2324,7 +2874,7 @@ mod tests {
                     command: Some(format!("/usr/bin/{name}")),
                     memory_bytes: 64,
                     virtual_memory_bytes: 64,
-                    cpu_percent: index as f32,
+                    cpu_percent: index as f32 + 1.0,
                     disk_total_read_bytes: 0,
                     disk_total_write_bytes: 0,
                     disk_read_delta_bytes: 0,
@@ -2337,20 +2887,6 @@ mod tests {
             networks: Vec::new(),
             network_received_delta_bytes: 0,
             network_transmitted_delta_bytes: 0,
-        };
-
-        build_snapshot_report(
-            &sample,
-            SnapshotReportOptions {
-                interval: Duration::from_secs(1),
-                group_by: GroupBy::Process,
-                sort_by: SortBy::Name,
-                filters: FilterSpec::default(),
-                show_command: false,
-                show_path: false,
-                limit: 20,
-                normalize_cpu: false,
-            },
-        )
+        }
     }
 }

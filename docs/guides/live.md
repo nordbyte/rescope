@@ -17,7 +17,7 @@ rescope live --tui --group user --sort cpu
 ```
 
 Interactive mode uses an alternate screen and exits with `q`, `Esc` or `Ctrl-C`.
-The footer shows the same direct option shortcuts in every main live view.
+The footer shows the same direct option shortcuts in every main live or recording-analysis view.
 
 The interactive TUI is menu-driven:
 
@@ -29,6 +29,8 @@ The interactive TUI is menu-driven:
 - `v` opens view settings directly.
 - `r` opens recording controls directly.
 - `e` opens snapshot export directly.
+- `a` opens the last recording analysis when one exists.
+- `l` returns from recording analysis to live view.
 - `/` edits the live search query.
 - Up/down selects table rows or moves within menus.
 - PageUp/PageDown moves the selected table row by larger steps.
@@ -46,7 +48,7 @@ The view menu can hide optional PID, user, rate, total and top-process columns. 
 
 The filter menu can set live search, process, user, name, path and parent text filters, invert active filters, hide the current `rescope` process and cycle CPU, RAM and I/O threshold presets without restarting the command.
 
-The recording menu starts a short streaming recording from inside the TUI, stops it early if needed and exports the last recording as JSON or CSV. Export actions open a path prompt and refuse to overwrite an existing file.
+The recording menu starts a short streaming recording from inside the TUI, stops it early if needed, opens the last recording analysis and exports the last recording as JSON or CSV. When a TUI recording finishes, rescope switches into recording analysis instead of returning to the live table. The analysis keeps the captured samples available for sorting, grouping, filtering, searching, row details and export without leaving the TUI.
 
 ## One-shot live
 

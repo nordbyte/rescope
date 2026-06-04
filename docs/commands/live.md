@@ -25,7 +25,7 @@ rescope live --prometheus 127.0.0.1:9898
 ## Modes
 
 - Plain mode clears and redraws the terminal, including terminal scrollback.
-- TUI mode uses an alternate screen with a central `o` options menu, direct menus for sorting/grouping/filtering/view/recording/export, frozen or following row details, live search, pause/resume, row-limit, interval and column controls. The footer shows the same direct option shortcuts in every main live view.
+- TUI mode uses an alternate screen with a central `o` options menu, direct menus for sorting/grouping/filtering/view/recording/export, frozen or following row details, live search, pause/resume, row-limit, interval and column controls. The footer shows the same direct option shortcuts in every main live or recording-analysis view. Finished TUI recordings open a sortable, groupable, filterable recording analysis in place; press `l` to return to live view and `a` to reopen the latest analysis.
 - `--once` renders one sample and exits.
 
 `--json` and `--csv` are supported only with `--once`. Continuous exports use `--jsonl` or `--csv-stream`; use `--quiet` when a stream writes to stdout.

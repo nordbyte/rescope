@@ -11,7 +11,7 @@ rescope tree --json tree.json
 rescope --json - diff before.json after.json
 ```
 
-In `rescope live --tui`, press `e` for snapshot exports or `r` for recording exports. The TUI opens a path prompt before writing and refuses to overwrite an existing file.
+In `rescope live --tui`, press `e` for snapshot exports or `r` for recording exports. Finished TUI recordings open a recording analysis in place; export commands use the currently sorted, grouped and filtered analysis report. The TUI opens a path prompt before writing and refuses to overwrite an existing file.
 
 Recording exports include approximate percentile fields and started/exited process counts. JSON includes bounded timelines; CSV keeps one row per aggregate result.
 
